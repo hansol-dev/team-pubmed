@@ -4,4 +4,9 @@ __pycache__/
 *.py[cod]
 *.db
 .pytest_cache/
+*.db
+*.sqlite
+__pycache__/
+*.py[cod]
+.venv/
 

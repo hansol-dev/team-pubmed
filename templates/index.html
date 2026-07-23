@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PubMed Insight</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar clay-card">
+        <a class="brand" href="/" aria-label="PubMed Insight 홈"><span>✦</span> PubMed Insight</a>
+        <p class="brand-copy">논문을 모으고, 흐름을 읽고,<br />근거를 바탕으로 질문하세요.</p>
+
+        <form id="collect-form" class="collect-form">
+          <label for="collect-keyword">검색 키워드</label>
+          <input id="collect-keyword" name="keyword" placeholder="예: diabetes" required />
+          <div class="field-row">
+            <div><label for="collect-from">시작 연도</label><input id="collect-from" name="year_from" type="number" min="1900" max="2100" placeholder="2020" /></div>
+            <div><label for="collect-to">종료 연도</label><input id="collect-to" name="year_to" type="number" min="1900" max="2100" placeholder="2025" /></div>
+          </div>
+          <label for="collect-max">최대 수집 건수</label>
+          <select id="collect-max" name="max_count"><option value="25">25건</option><option value="50" selected>50건</option><option value="100">100건</option></select>
+          <button class="primary-button" type="submit"><span>⌁</span> 논문 수집하기</button>
+          <p id="collect-status" class="form-status" role="status"></p>
+        </form>
+
+        <div class="sidebar-note"><span>✦</span> PubMed 논문 기반 탐색 도구입니다.</div>
+      </aside>
+
+      <section class="content">
+        <header class="page-header"><div><p class="eyebrow">RESEARCH COMPANION</p><h1>오늘의 연구 흐름을<br /><em>한눈에</em> 살펴보세요.</h1></div>{% if user %}<form action="/auth/logout" method="post" class="user-menu"><span class="profile-dot">{{ user.name[:1] }}</span><span>{{ user.name }}</span><button type="submit" class="text-button">로그아웃</button></form>{% else %}<a class="oauth-button" href="/auth/login"><span>G</span> Google로 시작하기</a>{% endif %}</header>
+        <nav class="tabs" aria-label="주요 메뉴"><button class="tab is-active" data-tab="overview">개요</button><button class="tab" data-tab="papers">논문 목록</button><button class="tab" data-tab="chat">AI 챗봇</button></nav>
+
+        <section id="overview" class="tab-panel is-active">
+          <div class="metric-grid">
+            <article class="metric-card clay-card"><span class="metric-icon purple">⌘</span><p>전체 논문</p><strong id="metric-papers">—</strong><small>저장된 논문 수</small></article>
+            <article class="metric-card clay-card"><span class="metric-icon mint">＋</span><p>이번 수집 신규</p><strong id="metric-new">—</strong><small>새로 추가된 논문</small></article>
+            <article class="metric-card clay-card"><span class="metric-icon peach">↷</span><p>중복 스킵</p><strong id="metric-skipped">—</strong><small>PMID 기준</small></article>
+            <article class="metric-card clay-card"><span class="metric-icon blue">◌</span><p>저널 수</p><strong id="metric-journals">—</strong><small>분석 대상 저널</small></article>
+          </div>
+          <div class="chart-grid"><article class="chart-card clay-card"><div class="card-heading"><div><p class="eyebrow">PUBLICATION TREND</p><h2>연도별 논문 수</h2></div></div><canvas id="year-chart"></canvas></article><article class="chart-card clay-card"><div class="card-heading"><div><p class="eyebrow">TOP SOURCES</p><h2>주요 저널</h2></div></div><canvas id="journal-chart"></canvas></article></div>
+        </section>
+
+        <section id="papers" class="tab-panel">
+          <article class="clay-card table-card"><div class="card-heading"><div><p class="eyebrow">PAPER LIBRARY</p><h2>논문 목록</h2></div><button id="download-csv" class="secondary-button">↓ CSV 다운로드</button></div><form id="filter-form" class="filter-bar"><input name="keyword" placeholder="제목 또는 초록 검색" /><input name="year_from" type="number" placeholder="시작 연도" /><input name="year_to" type="number" placeholder="종료 연도" /><input name="journal" placeholder="저널명" /><button class="primary-button" type="submit">필터 적용</button></form><p id="papers-summary" class="result-summary">수집 후 논문 목록을 확인할 수 있습니다.</p><div id="papers-container" class="paper-table-wrap"></div></article>
+        </section>
+
+        <section id="chat" class="tab-panel"><article class="chat-card clay-card"><div class="card-heading"><div><p class="eyebrow">PAPER-GROUNDED AI</p><h2>AI 논문 탐색 도우미</h2></div><span class="safe-badge">의료 조언 제외</span></div><div id="chat-log" class="chat-log"><div class="chat-message assistant"><span class="avatar">✦</span><div>저장된 PubMed 논문을 바탕으로 연구 동향과 핵심 내용을 함께 살펴볼게요. 무엇이 궁금한가요?</div></div></div><form id="chat-form" class="chat-form"><input id="chat-input" placeholder="예: 당뇨병 관련 최신 연구 동향을 알려줘" required /><button class="primary-button" type="submit">보내기 <span>→</span></button></form><p class="chat-disclaimer">의료적 진단·처방·복용 방법은 제공하지 않습니다.</p></article></section>
+      </section>
+    </main>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/chat.js"></script>
+  </body>
+</html>

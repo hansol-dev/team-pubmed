@@ -93,6 +93,29 @@ def papers_by_year(papers: list[dict]) -> dict[int, int]: ...
 def top_journals(papers: list[dict], n: int = 10) -> list[tuple[str, int]]: ...
 ```
 
+### SQLite 스키마 및 검색 규칙 — 확정
+
+```sql
+CREATE TABLE IF NOT EXISTS papers (
+  pmid         TEXT PRIMARY KEY,
+  title        TEXT NOT NULL,
+  abstract     TEXT NOT NULL DEFAULT '',
+  journal      TEXT NOT NULL DEFAULT '',
+  pub_year     INTEGER,
+  authors      TEXT NOT NULL DEFAULT '',
+  collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_papers_year ON papers(pub_year);
+CREATE INDEX IF NOT EXISTS idx_papers_journal ON papers(journal);
+```
+
+- `pmid`를 기준으로 중복은 저장하지 않고 스킵 수에 포함한다.
+- `keyword`는 제목 또는 초록에서 대소문자 구분 없이 검색한다.
+- 연도 범위는 양 끝값을 포함한다. 빈 값은 해당 조건을 적용하지 않는다.
+- `journal`은 UI에서 선택한 저널명과 정확히 일치하는 결과만 반환한다.
+- 최신 연도·PMID 순으로 최대 100건을 반환한다. 페이지네이션은 첫 버전 범위에서 제외한다.
+
 ## B가 제공할 API 초안
 
 | Method | Endpoint | 요청 / 응답 요약 |
@@ -112,6 +135,35 @@ def top_journals(papers: list[dict], n: int = 10) -> list[tuple[str, int]]: ...
   "max_count": 100
 }
 ```
+
+### 응답 및 오류 형식 — 확정
+
+논문 목록은 아래처럼 결과 배열과 전체 수를 함께 반환한다.
+
+```json
+{
+  "papers": [{
+    "pmid": "12345678",
+    "title": "Paper title",
+    "abstract": "Abstract text",
+    "journal": "Journal name",
+    "pub_year": 2025,
+    "authors": "Kim H, Lee J"
+  }],
+  "total": 1
+}
+```
+
+오류는 FastAPI 기본 형식을 통일해 사용한다.
+
+```json
+{ "detail": "사용자에게 보여 줄 오류 메시지" }
+```
+
+- 잘못된 입력: `400`
+- 로그인되지 않은 사용자: `401`
+- PubMed/OpenAI 등 외부 서비스 호출 실패: `502`
+- 예상하지 못한 서버 오류: `500`
 
 ## 화면 구성
 
@@ -135,6 +187,8 @@ def top_journals(papers: list[dict], n: int = 10) -> list[tuple[str, int]]: ...
 └─ 답변 근거 PMID 칩/링크
 ```
 
+논문 목록은 데스크톱(`768px` 초과)에서 필터 가능한 테이블로, 모바일에서는 제목·저널·연도·PMID만 우선 보이는 카드 목록으로 전환한다. CSV 다운로드는 현재 필터 결과 전체를 대상으로 한다.
+
 ## 챗봇 동작 원칙
 
 ```text
@@ -148,6 +202,12 @@ def top_journals(papers: list[dict], n: int = 10) -> list[tuple[str, int]]: ...
 
 - 챗봇은 의료 진단이나 처방을 제공하지 않고, 저장된 PubMed 논문 정보만 요약한다.
 - API 키는 `.env`의 `OPENAI_API_KEY`로 관리하며 커밋하지 않는다.
+
+### 의료 조언 차단 규칙 — 확정
+
+- 사용자가 개인의 증상에 대한 진단, 치료법, 처방, 복용량, 약 변경을 요구하면 체인을 호출하지 않고 차단한다.
+- 논문 요약, 질환 연구 동향, 키워드 기반 논문 탐색은 허용한다.
+- 차단 문구: `의료적 진단·처방·복용 방법은 안내할 수 없습니다. 의료 전문가와 상담해 주세요. 대신 PubMed 논문 검색과 연구 정보 요약은 도와드릴 수 있습니다.`
 
 ## 디자인 가이드 — Claymorphism
 
@@ -172,10 +232,38 @@ def top_journals(papers: list[dict], n: int = 10) -> list[tuple[str, int]]: ...
 5. 챗봇과 의료 조언 차단을 연결한다.
 6. 필수 요구사항을 검증한 뒤 OAuth, SSE 고도화, 배포를 진행한다.
 
-## 다음 논의 항목
+## 로컬 실행 (B 브랜치)
 
-- [ ] SQLite 테이블 컬럼과 `search_papers()`의 검색 조건 확정
-- [ ] API 응답의 논문 필드 및 오류 형식 확정
-- [ ] 논문 목록의 데스크톱 테이블 / 모바일 카드 전환 범위 확정
-- [ ] 의료 조언 차단 문구와 조건 확정
-- [ ] OAuth와 배포를 최종 제출 범위에 포함할지 결정
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+uvicorn main:app --reload
+```
+
+`.env`에 OpenAI 및 Google OAuth 값을 입력한 뒤 `http://127.0.0.1:8000`으로 접속한다.
+
+## 도전 과제 범위 — 확정
+
+### Google OAuth
+
+- Google 로그인은 최종 제출 범위에 포함한다.
+- Authlib로 구현하며, Google 계정의 이메일·표시 이름만 세션에 보관한다.
+- 로그인 성공 후 메인 화면으로 이동하고, 로그아웃 기능을 제공한다.
+- 첫 버전은 별도 사용자 테이블·권한 등급을 만들지 않는다.
+
+### 배포
+
+- 배포는 최종 제출 범위에 포함한다.
+- 배포 환경에서도 SQLite 파일이 유지되도록 영속 디스크(Volume)를 연결할 수 있는 Python 호스팅을 사용한다.
+- `DATABASE_PATH`, `OPENAI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`은 배포 환경 변수로 설정한다.
+- 배포 URL을 Google OAuth 승인 리디렉션 URI에 등록하고, 실제 로그인·수집·챗봇 흐름을 점검한다.
+
+## 결정 완료
+
+- [x] SQLite 테이블 컬럼과 `search_papers()`의 검색 조건 확정
+- [x] API 응답의 논문 필드 및 오류 형식 확정
+- [x] 논문 목록의 데스크톱 테이블 / 모바일 카드 전환 범위 확정
+- [x] 의료 조언 차단 문구와 조건 확정
+- [x] OAuth와 배포를 최종 제출 범위에 포함
