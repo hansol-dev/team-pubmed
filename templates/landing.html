@@ -51,6 +51,44 @@
             background-color: #7768DC;
             color: #FFFFFF;
         }
+        .legacy-dashboard-preview { display: none; }
+        .pub-app-showcase { padding: 96px 24px; background: #f7f7fb; }
+        .pub-app-showcase__inner { max-width: 1120px; margin: 0 auto; }
+        .pub-app-showcase__heading { margin-bottom: 44px; text-align: center; }
+        .pub-app-showcase__heading h2 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 44px); letter-spacing: -0.06em; }
+        .pub-app-showcase__heading p { margin: 0; color: #737086; }
+        .pub-app { overflow: hidden; border: 1px solid #e7e5ef; border-radius: 28px; background: #fbfaff; box-shadow: 0 26px 60px -38px rgba(72, 58, 128, .38); }
+        .pub-app__top { display: flex; align-items: center; justify-content: space-between; padding: 17px 22px; border-bottom: 1px solid #eceaf3; background: #fff; }
+        .pub-app__brand { display: flex; align-items: center; gap: 8px; color: #7768dc; font-size: 16px; font-weight: 800; letter-spacing: -0.05em; }
+        .pub-app__brand-mark { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 9px; background: #7768dc; color: #fff; font-size: 14px; }
+        .pub-app__login { padding: 7px 11px; border-radius: 999px; background: #f2efff; color: #7768dc; font-size: 11px; font-weight: 700; }
+        .pub-app__body { display: grid; grid-template-columns: 206px minmax(0, 1fr); min-height: 510px; }
+        .pub-app__sidebar { padding: 25px 17px; background: #f6f4ff; border-right: 1px solid #ebe9f3; }
+        .pub-app__sidebar p { margin: 0 0 7px; color: #5b576b; font-size: 11px; font-weight: 800; }
+        .pub-app__input { margin-bottom: 15px; padding: 10px 11px; border: 1px solid #ebe8f3; border-radius: 11px; background: #fff; color: #3f3b4d; font-size: 12px; }
+        .pub-app__years { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 15px; }
+        .pub-app__years span { display: block; padding: 9px 8px; border-radius: 10px; background: #fff; color: #6e687b; font-size: 11px; }
+        .pub-app__collect { display: block; width: 100%; padding: 11px 8px; border-radius: 11px; background: #7768dc; color: #fff; text-align: center; font-size: 12px; font-weight: 800; }
+        .pub-app__main { padding: 27px; }
+        .pub-app__tabs { display: flex; gap: 6px; margin-bottom: 22px; border-bottom: 1px solid #efedf4; }
+        .pub-app__tabs span { padding: 9px 13px; color: #827c90; font-size: 12px; font-weight: 700; }
+        .pub-app__tabs .is-active { border-radius: 10px 10px 0 0; background: #eeeaff; color: #7768dc; }
+        .pub-app__metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 13px; }
+        .pub-app__metric { padding: 13px; border: 1px solid #ece9f2; border-radius: 13px; background: #fff; }
+        .pub-app__metric small { display: block; color: #8d8699; font-size: 10px; }
+        .pub-app__metric b { display: block; margin-top: 5px; color: #2d2939; font-size: 21px; letter-spacing: -0.06em; }
+        .pub-app__grid { display: grid; grid-template-columns: 1.12fr .88fr; gap: 13px; }
+        .pub-app__card { padding: 16px; border: 1px solid #ece9f2; border-radius: 15px; background: #fff; }
+        .pub-app__label { margin: 0 0 10px; color: #8d8699; font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+        .pub-app__chart { display: flex; align-items: end; gap: 8px; height: 134px; padding: 10px 3px 0; border-bottom: 1px solid #efedf3; }
+        .pub-app__chart i { flex: 1; border-radius: 7px 7px 2px 2px; background: #d9d2ff; }
+        .pub-app__chart i:nth-child(1) { height: 40%; }.pub-app__chart i:nth-child(2) { height: 57%; }.pub-app__chart i:nth-child(3) { height: 75%; }.pub-app__chart i:nth-child(4) { height: 91%; background: #7768dc; }.pub-app__chart i:nth-child(5) { height: 66%; }.pub-app__chart i:nth-child(6) { height: 83%; }
+        .pub-app__years-label { display: flex; justify-content: space-between; padding-top: 7px; color: #aaa5b2; font-size: 9px; }
+        .pub-app__journal { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0eef4; color: #565064; font-size: 11px; }.pub-app__journal:last-child { border: 0; }.pub-app__journal b { color: #7768dc; }
+        .pub-app__papers { margin-top: 13px; padding: 15px; border: 1px solid #ece9f2; border-radius: 15px; background: #fff; }
+        .pub-app__paper { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f0eef4; }.pub-app__paper:last-child { border: 0; }.pub-app__paper-icon { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 9px; background: #eeeaff; color: #7768dc; }.pub-app__paper div { min-width: 0; flex: 1; }.pub-app__paper b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3e394a; font-size: 11px; }.pub-app__paper small { color: #938d9d; font-size: 9px; }
+        .pub-app__ai { margin-top: 13px; padding: 15px; border-radius: 15px; background: linear-gradient(135deg, #7464d9, #aa9cf0); color: #fff; }.pub-app__ai p { margin: 0 0 8px; font-size: 11px; font-weight: 800; }.pub-app__ai div { padding: 10px; border-radius: 10px; background: #ffffff; color: #56506c; font-size: 10px; line-height: 1.55; }
+        @media (max-width: 760px) { .pub-app-showcase { padding: 70px 16px; }.pub-app__body { grid-template-columns: 1fr; }.pub-app__sidebar { display: none; }.pub-app__main { padding: 17px; }.pub-app__metrics { grid-template-columns: 1fr 1fr; }.pub-app__grid { grid-template-columns: 1fr; }.pub-app__metric:last-child { display: none; }.pub-app__tabs { overflow: hidden; }.pub-app__tabs span { padding: 9px 8px; font-size: 10px; white-space: nowrap; } }
         @keyframes blink {
             from, to { border-color: transparent }
             50% { border-color: #7768DC; }
@@ -1581,7 +1619,7 @@ video {
     </section>
 
     
-    <section class="py-24 bg-gray-50 overflow-hidden" vid="99">
+    <section class="legacy-dashboard-preview py-24 bg-gray-50 overflow-hidden" vid="99">
         <div class="max-w-7xl mx-auto px-6" vid="100">
             <div class="text-center mb-16" vid="101">
                 <h2 class="text-3xl md:text-4xl font-bold mb-4" vid="102">탐색부터 분석까지, 하나의 화면에서</h2>
@@ -1717,6 +1755,28 @@ video {
     </section>
 
     
+    <section class="pub-app-showcase">
+        <div class="pub-app-showcase__inner">
+            <div class="pub-app-showcase__heading">
+                <h2>탐색부터 분석까지, 하나의 화면에서</h2>
+                <p>논문을 수집하고 연구 흐름을 읽은 뒤, AI와 근거를 확인하는 실제 Publium 화면입니다.</p>
+            </div>
+            <div class="pub-app">
+                <div class="pub-app__top"><div class="pub-app__brand"><span class="pub-app__brand-mark"><i class="ph-fill ph-article-ny-times"></i></span>Publium</div><span class="pub-app__login">Google로 로그인</span></div>
+                <div class="pub-app__body">
+                    <aside class="pub-app__sidebar"><p>검색 키워드</p><div class="pub-app__input">obesity</div><p>연도 범위</p><div class="pub-app__years"><span>2020</span><span>2025</span></div><p>최대 수집 건수</p><div class="pub-app__input">100건</div><span class="pub-app__collect">논문 수집하기</span></aside>
+                    <div class="pub-app__main">
+                        <div class="pub-app__tabs"><span class="is-active">개요</span><span>논문 목록</span><span>AI 챗봇</span></div>
+                        <div class="pub-app__metrics"><article class="pub-app__metric"><small>전체 논문</small><b>100</b></article><article class="pub-app__metric"><small>신규 수집</small><b>62</b></article><article class="pub-app__metric"><small>저널 수</small><b>27</b></article></div>
+                        <div class="pub-app__grid"><article class="pub-app__card"><p class="pub-app__label">PUBMED 검색 결과 수 (연도별)</p><div class="pub-app__chart"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="pub-app__years-label"><span>2020</span><span>2021</span><span>2022</span><span>2023</span><span>2024</span><span>2025</span></div></article><article class="pub-app__card"><p class="pub-app__label">주요 저널</p><div class="pub-app__journal"><span>Nature Medicine</span><b>24</b></div><div class="pub-app__journal"><span>JAMA Network</span><b>18</b></div><div class="pub-app__journal"><span>The Lancet</span><b>15</b></div></article></div>
+                        <div class="pub-app__papers"><p class="pub-app__label">논문 수집 목록</p><div class="pub-app__paper"><span class="pub-app__paper-icon"><i class="ph ph-file-text"></i></span><div><b>Long-term outcomes of obesity intervention</b><small>Nature Medicine · 2025 · PMID 39481277</small></div><i class="ph ph-caret-right"></i></div><div class="pub-app__paper"><span class="pub-app__paper-icon"><i class="ph ph-file-text"></i></span><div><b>Health effects of sustained weight reduction</b><small>JAMA Network · 2024 · PMID 38912465</small></div><i class="ph ph-caret-right"></i></div></div>
+                        <div class="pub-app__ai"><p>✦ PAPER-GROUNDED AI</p><div>수집된 논문을 기준으로 최근 연구 흐름을 정리하고, 관련 근거를 함께 확인할 수 있습니다.</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <section class="py-24 bg-white" vid="182">
         <div class="max-w-7xl mx-auto px-6" vid="183">
             <div class="grid lg:grid-cols-2 gap-20 items-center" vid="184">
