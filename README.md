@@ -255,7 +255,7 @@ uvicorn main:app --reload
 - Authlib로 구현하며, Google 계정의 이메일·표시 이름만 세션에 보관한다.
 - 로그인 성공 후 메인 화면으로 이동하고, 로그아웃 기능을 제공한다.
 - 첫 버전은 별도 사용자 테이블·권한 등급을 만들지 않는다.
-- 비로그인 사용자는 교체용 빈 랜딩 템플릿만 볼 수 있으며 논문 수집·검색·통계·챗봇 API는 `401`을 반환한다.
+- 비로그인 사용자는 랜딩 페이지까지만 볼 수 있으며 논문 수집·검색·통계·챗봇 API는 `401`을 반환한다.
 - Google Cloud Console의 OAuth 웹 클라이언트에 로컬 승인 리디렉션 URI로
   `http://127.0.0.1:8000/auth/callback`을 등록한다. `localhost`로 접속하려면
   `http://localhost:8000/auth/callback`도 별도로 등록해야 한다.
@@ -279,6 +279,9 @@ uvicorn main:app --reload
 - `DATABASE_URL`, `OPENAI_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
   `SESSION_SECRET`은 배포 환경 변수로 설정하며 저장소에 커밋하지 않는다.
 - 공개 HTTPS 배포 환경에서는 `HTTPS_ONLY=true`로 설정한다.
+- Render 헬스체크는 인증·DB·템플릿을 거치지 않는 `GET /health`를 사용한다.
+- 동기 PubMed·DB 호출은 스레드풀에서 실행하고 PubMed 작업은 프로세스당 최대 2개로 제한해
+  단일 워커에서도 수집 중 헬스체크와 로그인 요청을 계속 처리한다.
 - 배포 URL을 Google OAuth 승인 리디렉션 URI에 등록하고, 실제 로그인·수집·챗봇 흐름을 점검한다.
 - Render를 사용할 경우 저장소 연결 뒤 `render.yaml`을 Blueprint로 적용하고, 생성된 URL을 OAuth 리디렉션 URI에 등록한다.
 

@@ -29,14 +29,20 @@ def _session_cookie(email: str = "user@example.com") -> str:
 
 
 class AuthenticationGateTests(unittest.TestCase):
-    def test_unauthenticated_user_sees_empty_landing_and_cannot_access_api(self):
+    def test_health_check_is_public_and_lightweight(self):
+        with TestClient(app) as client:
+            response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_unauthenticated_user_sees_landing_and_cannot_access_api(self):
         with TestClient(app) as client:
             page = client.get("/")
             api = client.get("/api/stats")
 
         self.assertEqual(page.status_code, 200)
         self.assertNotIn('id="collect-form"', page.text)
-        self.assertEqual(page.text.count("<body></body>"), 1)
         self.assertEqual(api.status_code, 401)
         self.assertEqual(api.json()["detail"], "Google 로그인이 필요합니다.")
 
@@ -49,7 +55,7 @@ class AuthenticationGateTests(unittest.TestCase):
         self.assertIn('id="collect-form"', page.text)
         self.assertIn("테스트 사용자", page.text)
 
-    def test_logout_clears_session_and_returns_empty_landing(self):
+    def test_logout_clears_session_and_returns_landing(self):
         token = {
             "userinfo": {
                 "name": "Google 사용자",
@@ -70,7 +76,6 @@ class AuthenticationGateTests(unittest.TestCase):
         self.assertIn("session=null", response.headers["set-cookie"])
         self.assertEqual(page.status_code, 200)
         self.assertNotIn('id="collect-form"', page.text)
-        self.assertEqual(page.text.count("<body></body>"), 1)
 
     def test_oauth_callback_returns_actionable_error(self):
         with patch.object(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 
@@ -29,12 +30,29 @@ async def stream_answer(
     user_id: str,
 ) -> AsyncIterator[str]:
     """Yield answer tokens grounded only in the retrieved paper metadata."""
-    history = get_messages(user_id, conversation_id, limit=40)
-    append_message(user_id, conversation_id, "user", question)
+    history = await asyncio.to_thread(
+        get_messages,
+        user_id,
+        conversation_id,
+        limit=40,
+    )
+    await asyncio.to_thread(
+        append_message,
+        user_id,
+        conversation_id,
+        "user",
+        question,
+    )
 
     if not os.getenv("OPENAI_API_KEY"):
         response = "OPENAI_API_KEY가 설정되지 않았습니다. 환경 변수를 설정한 뒤 다시 시도해 주세요."
-        append_message(user_id, conversation_id, "assistant", response)
+        await asyncio.to_thread(
+            append_message,
+            user_id,
+            conversation_id,
+            "assistant",
+            response,
+        )
         yield response
         return
 
@@ -62,4 +80,10 @@ async def stream_answer(
                 yield token
     finally:
         if answer_parts:
-            append_message(user_id, conversation_id, "assistant", "".join(answer_parts))
+            await asyncio.to_thread(
+                append_message,
+                user_id,
+                conversation_id,
+                "assistant",
+                "".join(answer_parts),
+            )

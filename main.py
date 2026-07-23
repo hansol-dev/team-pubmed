@@ -7,6 +7,8 @@ boundary between the web layer and the data layer.
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import os
 from collections.abc import AsyncIterator
@@ -26,7 +28,6 @@ load_dotenv(BASE_DIR / ".env")
 
 from auth import router as auth_router
 from services.chat_store import append_message, get_messages
-from services.chatbot import stream_answer
 from services.guard import blocked_response, is_medical_advice_request
 
 app = FastAPI(title="Publium", version="0.1.0")
@@ -40,6 +41,8 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 app.include_router(auth_router)
+# AIDEV-NOTE: Bound PubMed work on small single-worker deployments so long requests cannot exhaust the thread pool.
+PUBMED_CONCURRENCY = asyncio.Semaphore(2)
 
 
 class CollectRequest(BaseModel):
@@ -52,6 +55,11 @@ class CollectRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2_000)
     conversation_id: str | None = Field(default=None, max_length=100)
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
 
 
 @app.get("/")
@@ -109,16 +117,22 @@ async def collect_papers(
 
     _analysis, db, pubmed = _core_modules()
     try:
-        papers = pubmed.collect(
-            payload.keyword, payload.year_from, payload.year_to, payload.max_count
-        )
-        new_count, skipped_count = db.upsert_papers(
+        async with PUBMED_CONCURRENCY:
+            papers = await asyncio.to_thread(
+                pubmed.collect,
+                payload.keyword,
+                payload.year_from,
+                payload.year_to,
+                payload.max_count,
+            )
+        new_count, skipped_count = await asyncio.to_thread(
+            db.upsert_papers,
             papers, collection_keyword=payload.keyword
         )
         return {
             "new_count": new_count,
             "skipped_count": skipped_count,
-            "total_count": db.count_papers(),
+            "total_count": await asyncio.to_thread(db.count_papers),
         }
     except HTTPException:
         raise
@@ -130,16 +144,19 @@ async def collect_papers(
 async def get_stats(_user: dict[str, str] = Depends(require_user)):
     analysis, db, _pubmed = _core_modules()
     try:
-        total_papers = db.count_papers()
-        # AIDEV-NOTE: Overview statistics cover the full DB; only the paper list is capped at 100 rows.
-        papers = db.search_papers(limit=max(total_papers, 1))
-        return {
-            "total_papers": total_papers,
-            "total_journals": db.count_journals(),
-            "papers_by_year": analysis.papers_by_year(papers),
-            "top_journals": analysis.top_journals(papers),
-            "latest_trend": db.get_collection_trend(),
-        }
+        def build_stats() -> dict:
+            total_papers = db.count_papers()
+            # AIDEV-NOTE: Overview statistics cover the full DB; only the paper list is capped at 100 rows.
+            papers = db.search_papers(limit=max(total_papers, 1))
+            return {
+                "total_papers": total_papers,
+                "total_journals": db.count_journals(),
+                "papers_by_year": analysis.papers_by_year(papers),
+                "top_journals": analysis.top_journals(papers),
+                "latest_trend": db.get_collection_trend(),
+            }
+
+        return await asyncio.to_thread(build_stats)
     except Exception as error:
         raise HTTPException(status_code=500, detail="통계를 불러오지 못했습니다.") from error
 
@@ -166,9 +183,21 @@ async def get_publication_trend(
             detail="연도별 전체 건수 모듈을 통합하는 중입니다.",
         )
     try:
-        papers_by_year = count_by_year(keyword.strip(), year_from, year_to)
+        async with PUBMED_CONCURRENCY:
+            papers_by_year = await asyncio.to_thread(
+                count_by_year,
+                keyword.strip(),
+                year_from,
+                year_to,
+            )
         if persist:
-            db.save_collection_trend(keyword.strip(), year_from, year_to, papers_by_year)
+            await asyncio.to_thread(
+                db.save_collection_trend,
+                keyword.strip(),
+                year_from,
+                year_to,
+                papers_by_year,
+            )
         return {
             "keyword": keyword.strip(),
             "papers_by_year": papers_by_year,
@@ -189,7 +218,14 @@ async def get_papers(
         raise HTTPException(status_code=400, detail="시작 연도는 종료 연도보다 클 수 없습니다.")
     _analysis, db, _pubmed = _core_modules()
     try:
-        papers = db.search_papers(keyword, year_from, year_to, journal, limit=100)
+        papers = await asyncio.to_thread(
+            db.search_papers,
+            keyword,
+            year_from,
+            year_to,
+            journal,
+            100,
+        )
         return {"papers": papers, "total": len(papers)}
     except Exception as error:
         raise HTTPException(status_code=500, detail="논문 목록을 불러오지 못했습니다.") from error
@@ -200,8 +236,12 @@ async def get_collected_metadata(_user: dict[str, str] = Depends(require_user)):
     """Return every paper stored in SQLite for the metadata library tab."""
     _analysis, db, _pubmed = _core_modules()
     try:
-        total = db.count_papers()
-        papers = db.search_papers(limit=max(total, 1))
+        def load_metadata() -> tuple[int, list[dict]]:
+            total = db.count_papers()
+            papers = db.search_papers(limit=max(total, 1))
+            return total, papers
+
+        total, papers = await asyncio.to_thread(load_metadata)
         return {"papers": papers, "total": total}
     except Exception as error:
         raise HTTPException(status_code=500, detail="수집된 메타데이터를 불러오지 못했습니다.") from error
@@ -212,7 +252,7 @@ async def reset_collected_papers(_user: dict[str, str] = Depends(require_user)):
     """Remove only locally collected SQLite records after a UI confirmation."""
     _analysis, db, _pubmed = _core_modules()
     try:
-        return {"removed_count": db.clear_papers()}
+        return {"removed_count": await asyncio.to_thread(db.clear_papers)}
     except Exception as error:
         raise HTTPException(status_code=500, detail="수집 데이터를 초기화하지 못했습니다.") from error
 
@@ -227,8 +267,12 @@ async def chat_stream(
     # AIDEV-NOTE: user_id always comes from the signed session, never from a client-supplied payload.
     if is_medical_advice_request(payload.message):
         response_text = blocked_response()
-        append_message(user_id, conversation_id, "user", payload.message)
-        append_message(user_id, conversation_id, "assistant", response_text)
+
+        def save_blocked_exchange() -> None:
+            append_message(user_id, conversation_id, "user", payload.message)
+            append_message(user_id, conversation_id, "assistant", response_text)
+
+        await asyncio.to_thread(save_blocked_exchange)
 
         async def blocked_events() -> AsyncIterator[str]:
             yield f"data: {json.dumps({'token': response_text}, ensure_ascii=False)}\n\n"
@@ -237,10 +281,20 @@ async def chat_stream(
         return StreamingResponse(blocked_events(), media_type="text/event-stream")
 
     _analysis, db, _pubmed = _core_modules()
-    papers = db.search_papers(keyword=payload.message, limit=5)
+    papers = await asyncio.to_thread(
+        db.search_papers,
+        keyword=payload.message,
+        limit=5,
+    )
 
     async def events() -> AsyncIterator[str]:
-        async for chunk in stream_answer(
+        # AIDEV-NOTE: Lazy import keeps LangChain/OpenAI out of the deployment health-check cold start.
+        chatbot = await asyncio.to_thread(
+            importlib.import_module,
+            "services.chatbot",
+        )
+
+        async for chunk in chatbot.stream_answer(
             payload.message,
             papers,
             conversation_id,
@@ -259,5 +313,10 @@ async def chat_history(
 ):
     return {
         "conversation_id": conversation_id,
-        "messages": get_messages(user["email"], conversation_id, limit=200),
+        "messages": await asyncio.to_thread(
+            get_messages,
+            user["email"],
+            conversation_id,
+            limit=200,
+        ),
     }
