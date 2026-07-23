@@ -1,4 +1,4 @@
-const state = { papers: [], metadataPapers: [], searchPapers: [] };
+const state = { papers: [] };
 let pendingRequests = 0;
 
 const byId = (id) => document.getElementById(id);
@@ -107,49 +107,25 @@ function renderPapers(papers, totalCount = papers.length) {
   byId("papers-container").innerHTML = `<div class="paper-list">${papers.map((paper) => `<article class="paper-card"><div class="paper-card-head"><div><h3>${escapeHtml(paper.title || "제목 없음")}</h3><div class="paper-meta"><span class="meta-chip journal-chip">${escapeHtml(paper.journal || "저널 정보 없음")}</span><span class="meta-chip">${paper.pub_year || "연도 정보 없음"}</span><span class="pmid-chip">PMID ${escapeHtml(paper.pmid || "-")}</span></div></div></div><p class="paper-author"><strong>저자</strong> ${escapeHtml(paper.authors || "등록된 저자 정보가 없습니다.")}</p><p class="abstract-preview">${escapeHtml(paper.abstract || "초록 내용 없음")}</p><details class="abstract-details"><summary>초록 전체 보기</summary><p>${escapeHtml(paper.abstract || "초록 내용 없음")}</p></details></article>`).join("")}</div>`;
 }
 
-function renderSearchResults(papers) {
-  state.searchPapers = papers;
-  byId("search-summary").textContent = `${papers.length}건의 검색 결과입니다.`;
-  if (!papers.length) {
-    byId("search-container").innerHTML = "<p class='result-summary'>조건에 맞는 논문이 없습니다.</p>";
-    return;
-  }
-  byId("search-container").innerHTML = `<div class="paper-list">${papers.map((paper) => `<article class="paper-card"><div class="paper-card-head"><div><h3>${escapeHtml(paper.title || "제목 없음")}</h3><div class="paper-meta"><span class="meta-chip journal-chip">${escapeHtml(paper.journal || "저널 정보 없음")}</span><span class="meta-chip">${paper.pub_year || "연도 정보 없음"}</span><span class="pmid-chip">PMID ${escapeHtml(paper.pmid || "-")}</span></div></div></div><p class="paper-author"><strong>저자</strong> ${escapeHtml(paper.authors || "등록된 저자 정보가 없습니다.")}</p><p class="abstract-preview">${escapeHtml(paper.abstract || "초록 내용 없음")}</p><details class="abstract-details"><summary>초록 전체 보기</summary><p>${escapeHtml(paper.abstract || "초록 내용 없음")}</p></details></article>`).join("")}</div>`;
-}
-
 async function loadPapers() {
   try {
     const result = await request("/api/metadata");
-    state.metadataPapers = result.papers;
-    applyMetadataFilter();
+    renderPapers(result.papers, result.total);
   } catch (error) {
     byId("papers-summary").textContent = error.message;
   }
 }
 
-function applyMetadataFilter() {
-  const formData = new FormData(byId("metadata-filter-form"));
-  const keyword = String(formData.get("keyword") || "").trim().toLowerCase();
-  const journal = String(formData.get("journal") || "").trim().toLowerCase();
-  const yearFrom = Number(formData.get("year_from")) || null;
-  const yearTo = Number(formData.get("year_to")) || null;
-  const papers = state.metadataPapers.filter((paper) => {
-    const year = Number(paper.pub_year) || null;
-    const matchesKeyword = !keyword || [paper.title, paper.abstract].some((value) => String(value || "").toLowerCase().includes(keyword));
-    const matchesJournal = !journal || String(paper.journal || "").toLowerCase().includes(journal);
-    const matchesFrom = !yearFrom || (year && year >= yearFrom);
-    const matchesTo = !yearTo || (year && year <= yearTo);
-    return matchesKeyword && matchesJournal && matchesFrom && matchesTo;
-  });
-  renderPapers(papers, state.metadataPapers.length);
-}
-
-async function searchPapers(params) {
+async function searchMetadata(params) {
+  if (!params.toString()) {
+    await loadPapers();
+    return;
+  }
   try {
     const result = await request(`/api/papers?${params}`);
-    renderSearchResults(result.papers);
+    renderPapers(result.papers, result.total);
   } catch (error) {
-    byId("search-summary").textContent = error.message;
+    byId("papers-summary").textContent = error.message;
   }
 }
 
@@ -173,11 +149,8 @@ byId("reset-data").addEventListener("click", async () => {
   try {
     const result = await request("/api/papers/reset", { method: "POST" });
     state.papers = [];
-    state.metadataPapers = [];
-    state.searchPapers = [];
     byId("metadata-filter-form").reset();
     renderPapers([], 0);
-    renderSearchResults([]);
     renderCharts({ top_journals: [] });
     byId("metric-papers").textContent = "0";
     byId("metric-journals").textContent = "0";
@@ -193,13 +166,12 @@ byId("reset-data").addEventListener("click", async () => {
   }
 });
 
-byId("filter-form").addEventListener("submit", async (event) => { event.preventDefault(); searchPapers(nonEmptyFormParams(event.currentTarget)); });
-byId("metadata-filter-form").addEventListener("submit", (event) => { event.preventDefault(); applyMetadataFilter(); });
+byId("metadata-filter-form").addEventListener("submit", async (event) => { event.preventDefault(); searchMetadata(nonEmptyFormParams(event.currentTarget)); });
 byId("mobile-collect-trigger").addEventListener("click", () => setMobileCollectSheet(true));
 byId("mobile-sheet-backdrop").addEventListener("click", () => setMobileCollectSheet(false));
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") setMobileCollectSheet(false); });
 
-byId("download-csv").addEventListener("click", () => { if (!state.searchPapers.length) return; const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...state.searchPapers.map((paper) => [paper.pmid, paper.title, paper.abstract, paper.journal, paper.pub_year, paper.authors])]; const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "pubmed-search-results.csv"; link.click(); URL.revokeObjectURL(link.href); });
+byId("download-csv").addEventListener("click", () => { if (!state.papers.length) return; const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...state.papers.map((paper) => [paper.pmid, paper.title, paper.abstract, paper.journal, paper.pub_year, paper.authors])]; const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "pubmed-metadata.csv"; link.click(); URL.revokeObjectURL(link.href); });
 
 document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll(".tab,.tab-panel").forEach((element) => element.classList.remove("is-active")); tab.classList.add("is-active"); byId(tab.dataset.tab).classList.add("is-active"); if (tab.dataset.tab === "overview") loadStats().catch(() => {}); if (tab.dataset.tab === "papers") loadPapers(); }));
 
