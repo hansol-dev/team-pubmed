@@ -98,7 +98,7 @@ function renderSearchResults(papers) {
 
 async function loadPapers(params = new URLSearchParams()) {
   try {
-    const result = await request(`/api/papers?${params}`);
+    const result = await request("/api/metadata");
     renderPapers(result.papers);
   } catch (error) {
     byId("papers-summary").textContent = error.message;

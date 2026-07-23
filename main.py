@@ -158,6 +158,18 @@ async def get_papers(
         raise HTTPException(status_code=500, detail="논문 목록을 불러오지 못했습니다.") from error
 
 
+@app.get("/api/metadata")
+async def get_collected_metadata():
+    """Return every paper stored in SQLite for the metadata library tab."""
+    _analysis, db, _pubmed = _core_modules()
+    try:
+        total = db.count_papers()
+        papers = db.search_papers(limit=max(total, 1))
+        return {"papers": papers, "total": total}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="수집된 메타데이터를 불러오지 못했습니다.") from error
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(payload: ChatRequest):
     if is_medical_advice_request(payload.message):
