@@ -53,6 +53,7 @@
         }
         .legacy-dashboard-preview { display: none; }
         .pub-app-showcase { display: none; }
+        .landing-status-badge { overflow: hidden; }
         .live-app-showcase { padding: 96px 24px; background: #f7f7fb; }
         .live-app-showcase__inner { max-width: 1240px; margin: 0 auto; }
         .live-app-showcase__heading { margin-bottom: 44px; text-align: center; }
@@ -96,6 +97,49 @@
         .pub-app__paper { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f0eef4; }.pub-app__paper:last-child { border: 0; }.pub-app__paper-icon { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 9px; background: #eeeaff; color: #7768dc; }.pub-app__paper div { min-width: 0; flex: 1; }.pub-app__paper b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3e394a; font-size: 11px; }.pub-app__paper small { color: #938d9d; font-size: 9px; }
         .pub-app__ai { margin-top: 13px; padding: 15px; border-radius: 15px; background: linear-gradient(135deg, #7464d9, #aa9cf0); color: #fff; }.pub-app__ai p { margin: 0 0 8px; font-size: 11px; font-weight: 800; }.pub-app__ai div { padding: 10px; border-radius: 10px; background: #ffffff; color: #56506c; font-size: 10px; line-height: 1.55; }
         @media (max-width: 760px) { .live-app-showcase { padding: 70px 16px; }.live-app-showcase__frame { height: 620px; border-radius: 22px; }.pub-app__body { grid-template-columns: 1fr; }.pub-app__sidebar { display: none; }.pub-app__main { padding: 17px; }.pub-app__metrics { grid-template-columns: 1fr 1fr; }.pub-app__grid { grid-template-columns: 1fr; }.pub-app__metric:last-child { display: none; }.pub-app__tabs { overflow: hidden; }.pub-app__tabs span { padding: 9px 8px; font-size: 10px; white-space: nowrap; } }
+        /* Landing only: keep the first mobile view compact without changing the app UI. */
+        @media (max-width: 480px) {
+            nav > div { height: 64px !important; padding-right: 20px !important; padding-left: 20px !important; }
+            nav .w-10 { width: 32px !important; height: 32px !important; border-radius: 10px !important; }
+            nav .text-2xl { font-size: 1.25rem !important; }
+            nav a[href="/auth/login"] { padding: 8px 12px !important; font-size: .78rem !important; }
+            body > section:first-of-type { padding: 96px 0 56px !important; }
+            body > section:first-of-type > div { gap: 36px !important; padding-right: 20px !important; padding-left: 20px !important; }
+            body > section:first-of-type .space-y-8 > :not([hidden]) ~ :not([hidden]) { margin-top: 1.35rem !important; }
+            body > section:first-of-type .landing-status-badge { padding: 5px 11px 5px 16px !important; font-size: .72rem !important; }
+            .landing-status-badge > .relative { margin-right: 4px; }
+            body > section:first-of-type h1 { font-size: 2.35rem !important; line-height: 1.18 !important; letter-spacing: -.065em !important; }
+            body > section:first-of-type p.text-xl { font-size: 1rem !important; line-height: 1.7 !important; }
+            body > section:first-of-type .aspect-square { aspect-ratio: 16 / 11 !important; padding: 18px !important; border-radius: 28px !important; }
+            body > section:first-of-type .aspect-square .p-6 { padding: 16px !important; }
+            body > section:first-of-type .aspect-square .gap-4 { gap: 10px !important; }
+            body > section:first-of-type .aspect-square .h-20 { height: 48px !important; }
+            body > section:first-of-type .pt-4 { padding-top: 0 !important; }
+            body > section:nth-of-type(2) { padding: 64px 0 !important; }
+            body > section:nth-of-type(2) > div { padding-right: 20px !important; padding-left: 20px !important; }
+            body > section:nth-of-type(2) .gap-8 { gap: 14px !important; }
+            body > section:nth-of-type(2) .feature-card { padding: 22px !important; border-radius: 24px !important; }
+            body > section:nth-of-type(2) .feature-card-icon { width: 46px !important; height: 46px !important; margin-bottom: 15px !important; border-radius: 15px !important; }
+            body > section:nth-of-type(2) .feature-card-icon i { font-size: 1.45rem !important; }
+            body > section:nth-of-type(2) h3 { margin-bottom: 7px !important; font-size: 1.08rem !important; }
+            body > section:nth-of-type(2) p { font-size: .9rem !important; line-height: 1.65 !important; }
+            .live-app-showcase { padding: 58px 16px !important; }
+            .live-app-showcase__heading { margin-bottom: 24px !important; }
+            .live-app-showcase__heading h2 { margin-bottom: 7px !important; font-size: 1.55rem !important; }
+            .live-app-showcase__heading p { font-size: .88rem; line-height: 1.6; }
+            .live-app-showcase__frame { height: 585px !important; border-radius: 18px !important; }
+            .landing-benefits { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px !important; }
+            .landing-benefits > div { flex-direction: column; align-items: center; gap: 4px !important; min-width: 0; text-align: center; font-size: .66rem; line-height: 1.35; }
+            .landing-benefits i { flex: 0 0 auto; font-size: 1rem !important; }
+            .landing-cta { padding: 72px 0 !important; }
+            .landing-cta > div { padding-right: 20px !important; padding-left: 20px !important; }
+            .landing-cta h2 { margin-bottom: 14px !important; font-size: clamp(1.15rem, 5.4vw, 1.3rem) !important; line-height: 1.25 !important; letter-spacing: -.065em !important; white-space: nowrap; }
+            .landing-cta p { margin-bottom: 26px !important; font-size: 1rem !important; line-height: 1.6 !important; }
+            .landing-cta a { padding: 15px 24px !important; border-radius: 17px !important; font-size: 1rem !important; }
+            .landing-cta a img { width: 22px !important; height: 22px !important; }
+            .landing-feature-heading { margin-bottom: 24px !important; font-size: clamp(1.15rem, 6.35vw, 1.55rem) !important; font-weight: 400 !important; line-height: 1.25 !important; letter-spacing: -.06em !important; text-align: left; white-space: nowrap; }
+            .landing-feature-heading br { display: none; }
+        }
         @keyframes blink {
             from, to { border-color: transparent }
             50% { border-color: #7768DC; }
@@ -1489,7 +1533,7 @@ video {
     <section class="pt-40 pb-20 hero-gradient" vid="22">
         <div class="max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-16 items-center" vid="23">
             <div class="space-y-8" vid="24">
-                <div class="inline-flex items-center gap-2 px-4 py-1.5 bg-purple-100 text-purple-brand rounded-full text-sm font-semibold" vid="25">
+                <div class="landing-status-badge inline-flex items-center gap-2 px-4 py-1.5 bg-purple-100 text-purple-brand rounded-full text-sm font-semibold" vid="25">
                     <span class="relative flex h-2 w-2" vid="26">
                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" vid="27"></span>
                         <span class="relative inline-flex rounded-full h-2 w-2 bg-purple-brand" vid="28"></span>
@@ -1509,7 +1553,7 @@ video {
                         Google로 시작하기
                     </a>
                 </div>
-                <div class="flex items-center gap-6 text-sm text-gray-400 pt-4" vid="37">
+                <div class="landing-benefits flex items-center gap-6 text-sm text-gray-400 pt-4" vid="37">
                     <div class="flex items-center gap-2" vid="38">
                         <i class="ph ph-check-circle text-purple-brand text-lg" vid="39"></i>
                         PubMed 논문 수집
@@ -1769,7 +1813,7 @@ video {
                 <p>현재 Publium 서비스 화면을 그대로 보여드립니다.</p>
             </div>
             <div class="live-app-showcase__frame">
-                <iframe src="/landing/preview" title="Publium 서비스 화면 미리보기" loading="lazy" tabindex="-1"></iframe>
+                <iframe src="/landing/preview" title="Publium 서비스 화면 미리보기" loading="eager" scrolling="no" tabindex="-1"></iframe>
             </div>
         </div>
     </section>
@@ -1800,7 +1844,7 @@ video {
         <div class="max-w-7xl mx-auto px-6" vid="183">
             <div class="grid lg:grid-cols-2 gap-20 items-center" vid="184">
                 <div vid="185">
-                    <h2 class="text-4xl font-bold mb-12" vid="186">연구자를 위한<br vid="187">핵심 기능들</h2>
+                    <h2 class="landing-feature-heading text-4xl font-bold mb-12" vid="186">연구자를 위한<br vid="187">핵심 기능들</h2>
                     <div class="space-y-10" vid="188">
                         <div class="flex gap-6" vid="189">
                             <div class="w-12 h-12 bg-purple-100 rounded-xl flex-shrink-0 flex items-center justify-center text-purple-brand" vid="190">
@@ -1873,7 +1917,7 @@ video {
     </section>
 
     
-    <section class="py-24 relative overflow-hidden" vid="234">
+    <section class="landing-cta py-24 relative overflow-hidden" vid="234">
         <div class="max-w-7xl mx-auto px-6 text-center relative z-10" vid="235">
             <h2 class="text-4xl md:text-5xl font-bold mb-6" vid="236">새로운 질문에서 시작해 보세요.</h2>
             <p class="text-xl text-gray-600 mb-10 max-w-2xl mx-auto" vid="237">관심 키워드부터 입력하고, PubMed 논문 탐색을 시작해 보세요.</p>
