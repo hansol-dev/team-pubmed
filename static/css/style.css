@@ -31,6 +31,7 @@ body { font-size:16px; line-height:1.5; }.brand-copy { font-size:.95rem; }.colle
 @media (min-width:681px) { .mobile-title { display:none; } }
 .content { display:flex; flex-direction:column; min-height:calc(100vh - 64px); }.tab-panel { min-height:0; }.tab-panel.is-active { display:flex; flex:1 1 auto; flex-direction:column; min-height:0; }#overview .chart-grid { flex:1 1 auto; }#papers .metadata-card,#chat .chat-card { width:100%; min-height:0; flex:1 1 auto; }#papers.is-active .metadata-card { height:100%; max-height:none; }
 .landing-preview .page-header h1 { font-size:2.25rem; white-space:nowrap; }.landing-preview .user-menu .text-button { display:none; }
+@media (max-width:680px) { body.landing-preview { height:100dvh; overflow:hidden; }.landing-preview .app-shell { height:100dvh; overflow:hidden; }.landing-preview .content { height:calc(100dvh - 64px); overflow:hidden; }.landing-preview .tab-panel.is-active { height:100%; overflow:hidden; } }
 @media (max-width:680px) { .content { display:block; min-height:auto; }.tab-panel.is-active { display:block; }.tab-panel.is-active > .clay-card { min-height:auto; }.tab-panel.is-active .metadata-card { height:auto; } }
 @media (min-width:681px) { .app-shell { height:100vh; overflow:hidden; }.content { height:calc(100vh - 64px); min-height:0; overflow:hidden; }.tab-panel.is-active { overflow:hidden; }#papers.is-active .metadata-card { height:auto; min-height:0; } }
 @media (max-width:680px) { .app-shell { height:auto; overflow:visible; } }
