@@ -29,7 +29,7 @@ from services.chat_store import append_message, get_messages
 from services.chatbot import stream_answer
 from services.guard import blocked_response, is_medical_advice_request
 
-app = FastAPI(title="PubMed Insight", version="0.1.0")
+app = FastAPI(title="Publium", version="0.1.0")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.getenv("SESSION_SECRET", "local-development-secret-change-me"),
