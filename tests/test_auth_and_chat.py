@@ -53,6 +53,7 @@ class AuthenticationGateTests(unittest.TestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn('id="collect-form"', page.text)
+        self.assertIn('id="clear-chat"', page.text)
         self.assertIn("테스트 사용자", page.text)
 
     def test_logout_clears_session_and_returns_landing(self):
@@ -147,6 +148,36 @@ class PersistentChatIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(history["messages"][0]["content"], "이 증상을 진단해 주세요.")
         self.assertEqual(other_history["messages"], [])
+
+    def test_delete_chat_history_is_authenticated_and_user_scoped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_db = Path(temp_dir) / "chat.db"
+            with (
+                patch.object(chat_store, "DATABASE_URL", ""),
+                patch.object(chat_store, "DB_PATH", test_db),
+            ):
+                chat_store.append_message(
+                    "user@example.com", "default", "user", "삭제 대상"
+                )
+                chat_store.append_message(
+                    "other@example.com", "default", "user", "유지 대상"
+                )
+
+                with TestClient(app) as client:
+                    unauthenticated = client.delete("/api/chat/history")
+                    client.cookies.set("session", _session_cookie())
+                    deleted = client.delete("/api/chat/history")
+                    history = client.get("/api/chat/history").json()
+
+                other_messages = chat_store.get_messages(
+                    "other@example.com", "default"
+                )
+
+        self.assertEqual(unauthenticated.status_code, 401)
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json()["removed_count"], 1)
+        self.assertEqual(history["messages"], [])
+        self.assertEqual(other_messages[0]["content"], "유지 대상")
 
 
 if __name__ == "__main__":

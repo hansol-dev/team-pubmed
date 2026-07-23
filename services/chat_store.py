@@ -105,6 +105,25 @@ def get_messages(
     return [dict(row) for row in rows]
 
 
+def delete_messages(user_id: str, conversation_id: str) -> int:
+    """Delete one user's messages in a conversation and return the removed count."""
+    user_id = _normalize_required(user_id, "user_id").casefold()
+    conversation_id = _normalize_required(conversation_id, "conversation_id")
+
+    init_chat_db()
+    with _connect() as connection:
+        cursor = connection.execute(
+            _query(
+                """
+            DELETE FROM chat_messages
+            WHERE user_id = ? AND conversation_id = ?
+            """,
+            ),
+            (user_id, conversation_id),
+        )
+    return int(cursor.rowcount)
+
+
 def _normalize_required(value: str, field: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:

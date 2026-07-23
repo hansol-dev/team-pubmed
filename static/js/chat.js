@@ -1,6 +1,7 @@
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const chatLog = document.getElementById("chat-log");
+const clearChatButton = document.getElementById("clear-chat");
 const conversationId = "default";
 const introText = "수집한 논문을 바탕으로 무엇이 궁금한가요?";
 
@@ -16,8 +17,14 @@ function addMessage(role, content = "") {
   return message.querySelector("div");
 }
 
+function showEmptyConversation() {
+  chatLog.innerHTML = "";
+  addMessage("assistant", introText).parentElement.classList.add("intro-message");
+}
+
 async function loadChatHistory() {
   chatInput.disabled = true;
+  clearChatButton.disabled = true;
   try {
     const response = await fetch(`/api/chat/history?conversation_id=${encodeURIComponent(conversationId)}`);
     if (response.status === 401) {
@@ -29,7 +36,7 @@ async function loadChatHistory() {
 
     chatLog.innerHTML = "";
     if (!body.messages?.length) {
-      addMessage("assistant", introText).parentElement.classList.add("intro-message");
+      showEmptyConversation();
       return;
     }
     body.messages.forEach((message) => addMessage(message.role, message.content));
@@ -38,8 +45,37 @@ async function loadChatHistory() {
     addMessage("assistant", error.message);
   } finally {
     chatInput.disabled = false;
+    clearChatButton.disabled = false;
   }
 }
+
+clearChatButton.addEventListener("click", async () => {
+  if (!window.confirm("현재 대화 내역을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.")) return;
+
+  chatInput.disabled = true;
+  clearChatButton.disabled = true;
+  window.setAppLoading?.(true);
+  try {
+    const response = await fetch(
+      `/api/chat/history?conversation_id=${encodeURIComponent(conversationId)}`,
+      { method: "DELETE" },
+    );
+    if (response.status === 401) {
+      window.location.href = "/";
+      return;
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || "대화 내역을 삭제하지 못했습니다.");
+    showEmptyConversation();
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    window.setAppLoading?.(false);
+    chatInput.disabled = false;
+    clearChatButton.disabled = false;
+    chatInput.focus();
+  }
+});
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -49,6 +85,7 @@ chatForm.addEventListener("submit", async (event) => {
   addMessage("user", message);
   chatInput.value = "";
   chatInput.disabled = true;
+  clearChatButton.disabled = true;
   const answer = addMessage("assistant");
   let loadingVisible = true;
 
@@ -96,6 +133,7 @@ chatForm.addEventListener("submit", async (event) => {
   } finally {
     if (loadingVisible) window.setAppLoading?.(false);
     chatInput.disabled = false;
+    clearChatButton.disabled = false;
     chatInput.focus();
   }
 });

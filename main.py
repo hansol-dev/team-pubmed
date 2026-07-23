@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 from auth import router as auth_router
-from services.chat_store import append_message, get_messages
+from services.chat_store import append_message, delete_messages, get_messages
 from services.guard import blocked_response, is_medical_advice_request
 
 app = FastAPI(title="Publium", version="0.1.0")
@@ -320,3 +320,25 @@ async def chat_history(
             limit=200,
         ),
     }
+
+
+@app.delete("/api/chat/history")
+async def delete_chat_history(
+    conversation_id: str = "default",
+    user: dict[str, str] = Depends(require_user),
+):
+    try:
+        removed_count = await asyncio.to_thread(
+            delete_messages,
+            user["email"],
+            conversation_id,
+        )
+        return {
+            "conversation_id": conversation_id,
+            "removed_count": removed_count,
+        }
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="대화 내역을 삭제하지 못했습니다.",
+        ) from error

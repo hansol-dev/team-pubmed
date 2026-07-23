@@ -125,6 +125,7 @@ http://localhost:8000/auth/callback
 | `POST` | `/api/papers/reset` | 수집 데이터 초기화 |
 | `POST` | `/api/chat/stream` | AI 답변 SSE 스트리밍 |
 | `GET` | `/api/chat/history` | 사용자 채팅 기록 |
+| `DELETE` | `/api/chat/history` | 현재 사용자의 대화 기록 삭제 |
 
 ## 테스트
 

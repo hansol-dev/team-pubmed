@@ -47,6 +47,24 @@ class ChatStoreTests(unittest.TestCase):
 
         self.assertEqual([message["content"] for message in messages], ["3", "4"])
 
+    def test_delete_messages_only_removes_the_target_user_and_conversation(self):
+        chat_store.append_message("user@example.com", "default", "user", "삭제 대상")
+        chat_store.append_message("user@example.com", "saved", "user", "다른 대화")
+        chat_store.append_message("other@example.com", "default", "user", "다른 사용자")
+
+        removed = chat_store.delete_messages("USER@example.com", "default")
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(chat_store.get_messages("user@example.com", "default"), [])
+        self.assertEqual(
+            chat_store.get_messages("user@example.com", "saved")[0]["content"],
+            "다른 대화",
+        )
+        self.assertEqual(
+            chat_store.get_messages("other@example.com", "default")[0]["content"],
+            "다른 사용자",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
