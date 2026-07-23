@@ -110,7 +110,7 @@ def _core_modules():
 @app.post("/api/collect")
 async def collect_papers(
     payload: CollectRequest,
-    _user: dict[str, str] = Depends(require_user),
+    user: dict[str, str] = Depends(require_user),
 ):
     if payload.year_from > payload.year_to:
         raise HTTPException(status_code=400, detail="시작 연도는 종료 연도보다 클 수 없습니다.")
@@ -127,12 +127,14 @@ async def collect_papers(
             )
         new_count, skipped_count = await asyncio.to_thread(
             db.upsert_papers,
-            papers, collection_keyword=payload.keyword
+            user["email"],
+            papers,
+            collection_keyword=payload.keyword,
         )
         return {
             "new_count": new_count,
             "skipped_count": skipped_count,
-            "total_count": await asyncio.to_thread(db.count_papers),
+            "total_count": await asyncio.to_thread(db.count_papers, user["email"]),
         }
     except HTTPException:
         raise
@@ -141,19 +143,20 @@ async def collect_papers(
 
 
 @app.get("/api/stats")
-async def get_stats(_user: dict[str, str] = Depends(require_user)):
+async def get_stats(user: dict[str, str] = Depends(require_user)):
     analysis, db, _pubmed = _core_modules()
     try:
         def build_stats() -> dict:
-            total_papers = db.count_papers()
-            # AIDEV-NOTE: Overview statistics cover the full DB; only the paper list is capped at 100 rows.
-            papers = db.search_papers(limit=max(total_papers, 1))
+            user_id = user["email"]
+            total_papers = db.count_papers(user_id)
+            # AIDEV-NOTE: Overview statistics cover the user's full library.
+            papers = db.search_papers(user_id, limit=max(total_papers, 1))
             return {
                 "total_papers": total_papers,
-                "total_journals": db.count_journals(),
+                "total_journals": db.count_journals(user_id),
                 "papers_by_year": analysis.papers_by_year(papers),
                 "top_journals": analysis.top_journals(papers),
-                "latest_trend": db.get_collection_trend(),
+                "latest_trend": db.get_collection_trend(user_id),
             }
 
         return await asyncio.to_thread(build_stats)
@@ -167,7 +170,7 @@ async def get_publication_trend(
     year_from: int = 1900,
     year_to: int = 2100,
     persist: bool = False,
-    _user: dict[str, str] = Depends(require_user),
+    user: dict[str, str] = Depends(require_user),
 ):
     """Return PubMed's full ESearch count for each year, not the 100-paper sample."""
     if not keyword.strip():
@@ -193,6 +196,7 @@ async def get_publication_trend(
         if persist:
             await asyncio.to_thread(
                 db.save_collection_trend,
+                user["email"],
                 keyword.strip(),
                 year_from,
                 year_to,
@@ -212,7 +216,7 @@ async def get_papers(
     year_from: int | None = None,
     year_to: int | None = None,
     journal: str = "",
-    _user: dict[str, str] = Depends(require_user),
+    user: dict[str, str] = Depends(require_user),
 ):
     if year_from and year_to and year_from > year_to:
         raise HTTPException(status_code=400, detail="시작 연도는 종료 연도보다 클 수 없습니다.")
@@ -220,6 +224,7 @@ async def get_papers(
     try:
         papers = await asyncio.to_thread(
             db.search_papers,
+            user["email"],
             keyword,
             year_from,
             year_to,
@@ -232,13 +237,14 @@ async def get_papers(
 
 
 @app.get("/api/metadata")
-async def get_collected_metadata(_user: dict[str, str] = Depends(require_user)):
-    """Return every paper stored in SQLite for the metadata library tab."""
+async def get_collected_metadata(user: dict[str, str] = Depends(require_user)):
+    """Return every paper in the signed-in user's metadata library."""
     _analysis, db, _pubmed = _core_modules()
     try:
         def load_metadata() -> tuple[int, list[dict]]:
-            total = db.count_papers()
-            papers = db.search_papers(limit=max(total, 1))
+            user_id = user["email"]
+            total = db.count_papers(user_id)
+            papers = db.search_papers(user_id, limit=max(total, 1))
             return total, papers
 
         total, papers = await asyncio.to_thread(load_metadata)
@@ -248,11 +254,13 @@ async def get_collected_metadata(_user: dict[str, str] = Depends(require_user)):
 
 
 @app.post("/api/papers/reset")
-async def reset_collected_papers(_user: dict[str, str] = Depends(require_user)):
-    """Remove only locally collected SQLite records after a UI confirmation."""
+async def reset_collected_papers(user: dict[str, str] = Depends(require_user)):
+    """Remove the signed-in user's collected papers after UI confirmation."""
     _analysis, db, _pubmed = _core_modules()
     try:
-        return {"removed_count": await asyncio.to_thread(db.clear_papers)}
+        return {
+            "removed_count": await asyncio.to_thread(db.clear_papers, user["email"])
+        }
     except Exception as error:
         raise HTTPException(status_code=500, detail="수집 데이터를 초기화하지 못했습니다.") from error
 
@@ -283,6 +291,7 @@ async def chat_stream(
     _analysis, db, _pubmed = _core_modules()
     papers = await asyncio.to_thread(
         db.search_papers,
+        user_id,
         keyword=payload.message,
         limit=5,
     )

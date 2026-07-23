@@ -16,7 +16,7 @@ PubMed 논문을 수집하고 연구 흐름을 분석하며, 저장된 논문을
 - **논문 목록 검색** — 제목, 초록, 수집 키워드, 연도, 저널 조건으로 논문을 찾을 수 있습니다.
 - **초록 확인 및 CSV 다운로드** — 초록이 없는 논문도 목록에 유지하며, 현재 검색 결과를 CSV로 내려받을 수 있습니다.
 - **논문 기반 AI 챗봇** — 저장된 논문을 근거로 답변하고 관련 PMID를 함께 제시합니다.
-- **Google OAuth** — 로그인한 사용자별로 채팅 기록을 분리해 저장합니다.
+- **사용자별 연구 공간** — Google 로그인 계정별로 수집 논문, 검색 키워드, 분석 추세, 채팅 기록을 분리해 저장합니다.
 
 ## 기술 스택
 
@@ -46,7 +46,7 @@ team-pubmed/
 ├─ core/
 │  ├─ analysis.py          # 연도별·저널별 통계
 │  ├─ database.py          # SQLite/PostgreSQL 연결
-│  ├─ db.py                # 논문 저장·검색
+│  ├─ db.py                # 사용자별 논문 저장·검색
 │  └─ pubmed.py            # PubMed 수집
 ├─ services/
 │  ├─ chatbot.py           # 논문 기반 AI 답변
@@ -133,17 +133,19 @@ http://localhost:8000/auth/callback
 python -m unittest discover -s tests -v
 ```
 
-테스트는 PubMed 응답 파싱, SQLite/PostgreSQL 연결, 논문 검색·중복 처리, 통계, OAuth 접근 제어, 사용자별 채팅 기록, 의료 조언 차단을 검증합니다.
+테스트는 PubMed 응답 파싱, SQLite/PostgreSQL 연결, 사용자별 논문 격리, 논문 검색·중복 처리, 통계, OAuth 접근 제어, 사용자별 채팅 기록, 의료 조언 차단을 검증합니다.
 
 ## 배포
 
 현재 운영 환경은 다음과 같이 구성되어 있습니다.
 
 - **Render 무료 Web Service** — FastAPI 애플리케이션
-- **Supabase 무료 PostgreSQL** — 논문 및 채팅 데이터
+- **Supabase 무료 PostgreSQL** — 사용자별 논문 수집 목록 및 채팅 데이터
 - **Render Blueprint** — 저장소 루트의 `render.yaml`
 
 Render 환경 변수의 `DATABASE_URL`에는 Supabase의 **Session Pooler(포트 5432)** 연결 문자열을 사용합니다. 배포 후 Google OAuth 클라이언트에도 운영 리디렉션 URI를 추가해야 합니다.
+
+사용자별 저장 구조로 업데이트하면 기존 공용 논문은 어느 계정에도 자동 귀속되지 않습니다. 각 사용자는 로그인 후 필요한 논문을 새로 수집합니다.
 
 ## 주의사항
 

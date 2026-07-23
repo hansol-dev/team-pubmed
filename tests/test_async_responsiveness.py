@@ -20,11 +20,11 @@ class _BlockingPubMed:
 
 class _FakeDb:
     @staticmethod
-    def upsert_papers(_papers, collection_keyword=""):
+    def upsert_papers(_user_id, _papers, collection_keyword=""):
         return 0, 0
 
     @staticmethod
-    def count_papers():
+    def count_papers(_user_id):
         return 0
 
 
