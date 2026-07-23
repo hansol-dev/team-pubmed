@@ -8,6 +8,12 @@ function setMobileCollectSheet(open) {
   byId("mobile-collect-trigger").setAttribute("aria-expanded", String(open));
 }
 
+function updateMobileCollectTrigger(activeTab) {
+  const visible = activeTab === "overview";
+  byId("mobile-collect-trigger").classList.toggle("is-hidden", !visible);
+  if (!visible) setMobileCollectSheet(false);
+}
+
 function setAppLoading(isLoading) {
   pendingRequests = Math.max(0, pendingRequests + (isLoading ? 1 : -1));
   byId("loading-indicator").classList.toggle("is-visible", pendingRequests > 0);
@@ -173,6 +179,7 @@ document.addEventListener("keydown", (event) => { if (event.key === "Escape") se
 
 byId("download-csv").addEventListener("click", () => { if (!state.papers.length) return; const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...state.papers.map((paper) => [paper.pmid, paper.title, paper.abstract, paper.journal, paper.pub_year, paper.authors])]; const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n"); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "pubmed-metadata.csv"; link.click(); URL.revokeObjectURL(link.href); });
 
-document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll(".tab,.tab-panel").forEach((element) => element.classList.remove("is-active")); tab.classList.add("is-active"); byId(tab.dataset.tab).classList.add("is-active"); if (tab.dataset.tab === "overview") loadStats().catch(() => {}); if (tab.dataset.tab === "papers") loadPapers(); }));
+document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll(".tab,.tab-panel").forEach((element) => element.classList.remove("is-active")); tab.classList.add("is-active"); byId(tab.dataset.tab).classList.add("is-active"); updateMobileCollectTrigger(tab.dataset.tab); if (tab.dataset.tab === "overview") loadStats().catch(() => {}); if (tab.dataset.tab === "papers") loadPapers(); }));
 
+updateMobileCollectTrigger("overview");
 loadStats().catch(() => { byId("papers-summary").textContent = "A의 데이터 모듈 통합 후 논문을 불러옵니다."; });
