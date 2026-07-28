@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveLocalDevelopmentUser } from "../src/auth.js";
+import { isDedicatedLocalProfile, resolveLocalDevelopmentUser } from "../src/auth.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 
@@ -24,4 +24,10 @@ test("never accepts the local token in production or Vercel", () => {
     vercel: "1",
     userId,
   }), null);
+});
+
+test("recognizes only the dedicated local development profile", () => {
+  assert.equal(isDedicatedLocalProfile({ email: "local-dev@publium.local" }), true);
+  assert.equal(isDedicatedLocalProfile({ email: "hansol@example.com" }), false);
+  assert.equal(isDedicatedLocalProfile(null), false);
 });

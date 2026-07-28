@@ -37,7 +37,9 @@ export async function addToCollection(userId, pmids, keyword = "") {
   const result = await query(
     `INSERT INTO user_paper_collections (user_id, pmid)
      SELECT $1, p.pmid FROM pubmed_records p WHERE p.pmid = ANY($2::text[])
-     ON CONFLICT (user_id, pmid) DO NOTHING
+     ON CONFLICT (user_id, pmid) DO UPDATE
+     SET is_del=false,deleted_at=NULL,deleted_by=NULL,saved_at=now()
+     WHERE user_paper_collections.is_del=true
      RETURNING pmid`,
     [userId, pmids]
   );
@@ -46,7 +48,7 @@ export async function addToCollection(userId, pmids, keyword = "") {
 
 export async function listPapers(userId, filters = {}) {
   const values = [userId];
-  const where = ["up.user_id = $1"];
+  const where = ["up.user_id = $1", "up.is_del = false"];
   if (filters.keyword) {
     values.push(`%${filters.keyword}%`);
     where.push(`(p.title ILIKE $${values.length} OR p.abstract ILIKE $${values.length})`);

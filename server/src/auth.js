@@ -1,9 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 import { config } from "./config.js";
+import { query } from "./db.js";
 
 let client;
 const LOCAL_DEV_TOKEN = "publium-local-development";
+const LOCAL_DEV_EMAIL = "local-dev@publium.local";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isDedicatedLocalProfile(profile) {
+  return String(profile?.email || "").trim().toLowerCase() === LOCAL_DEV_EMAIL;
+}
 
 export function resolveLocalDevelopmentUser(token, {
   env = config.env,
@@ -17,7 +23,7 @@ export function resolveLocalDevelopmentUser(token, {
   return {
     user: {
       id: userId,
-      email: "local-dev@publium.local",
+      email: LOCAL_DEV_EMAIL,
       user_metadata: { full_name: "로컬 테스트" },
     },
   };
@@ -44,7 +50,20 @@ export async function requireUser(req, res, next) {
     const localDevelopment = resolveLocalDevelopmentUser(token);
     if (localDevelopment?.error) return res.status(503).json({ error: localDevelopment.error });
     if (localDevelopment?.user) {
-      req.user = localDevelopment.user;
+      const profile = await query(
+        "SELECT id,email,display_name FROM user_profiles WHERE id=$1",
+        [localDevelopment.user.id],
+      );
+      if (!isDedicatedLocalProfile(profile.rows[0])) {
+        return res.status(503).json({
+          error: "DEV_USER_ID must reference the dedicated local-dev@publium.local profile",
+        });
+      }
+      req.user = {
+        ...localDevelopment.user,
+        email: profile.rows[0].email,
+        user_metadata: { full_name: profile.rows[0].display_name || "로컬 테스트" },
+      };
       return next();
     }
     const { data, error } = await supabase().auth.getUser(token);

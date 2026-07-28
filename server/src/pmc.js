@@ -117,13 +117,25 @@ async function persistDocument(paper, sections, license, rawXml) {
         [paper.pmid, documentId]
       );
     }
-    await client.query("DELETE FROM paper_chunks WHERE document_id = $1", [documentId]);
+    await client.query(
+      "UPDATE paper_chunks SET is_del=true,deleted_at=now() WHERE document_id=$1 AND is_del=false",
+      [documentId],
+    );
     for (let index = 0; index < chunks.length; index += 1) {
       const embedding = embeddings[index];
       await client.query(
         `INSERT INTO paper_chunks
           (document_id,pmid,section,chunk_index,content,token_count,embedding,embedding_model)
-         VALUES ($1,$2,$3,$4,$5,$6,${embedding ? "$7::extensions.vector" : "NULL"},${embedding ? "$8" : "NULL"})`,
+         VALUES ($1,$2,$3,$4,$5,$6,${embedding ? "$7::extensions.vector" : "NULL"},${embedding ? "$8" : "NULL"})
+         ON CONFLICT (document_id,chunk_index) DO UPDATE SET
+           pmid=EXCLUDED.pmid,
+           section=EXCLUDED.section,
+           content=EXCLUDED.content,
+           token_count=EXCLUDED.token_count,
+           embedding=EXCLUDED.embedding,
+           embedding_model=EXCLUDED.embedding_model,
+           is_del=false,
+           deleted_at=NULL`,
         embedding
           ? [documentId, paper.pmid, chunks[index].section, index, chunks[index].content,
             Math.ceil(chunks[index].content.length / 4), JSON.stringify(embedding), config.embeddingModel]
@@ -187,7 +199,8 @@ export async function retrieveRoomContext(userId, roomId, question, limit = 10) 
            JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id
            JOIN paper_chunks pc ON pc.pmid=rp.pmid
            JOIN paper_documents pd ON pd.id=pc.document_id AND pd.is_current
-           WHERE rp.chat_room_id=$1 AND r.user_id=$2 AND pc.embedding IS NOT NULL
+           WHERE rp.chat_room_id=$1 AND r.user_id=$2
+             AND r.is_del=false AND pc.is_del=false AND pc.embedding IS NOT NULL
          )
          SELECT pmid,section,content,1-distance AS relevance
          FROM ranked
@@ -214,6 +227,7 @@ export async function retrieveRoomContext(userId, roomId, question, limit = 10) 
        JOIN paper_chunks pc ON pc.pmid=rp.pmid
        JOIN paper_documents pd ON pd.id=pc.document_id AND pd.is_current
        WHERE rp.chat_room_id=$1 AND r.user_id=$2
+         AND r.is_del=false AND pc.is_del=false
      )
      SELECT pmid,section,content,NULL::float AS relevance
      FROM ranked

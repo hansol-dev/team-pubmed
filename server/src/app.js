@@ -38,6 +38,39 @@ export function fillYearRange(yearFrom, yearTo, counts = {}) {
   return completed;
 }
 
+export async function resetUserWorkspace(client, userId) {
+  const messages = await client.query(
+    `UPDATE chat_messages
+     SET is_del=true,deleted_at=now(),deleted_by=$1
+     WHERE user_id=$1 AND is_del=false RETURNING id`,
+    [userId],
+  );
+  const chatRooms = await client.query(
+    `UPDATE chat_rooms
+     SET is_del=true,deleted_at=now(),deleted_by=$1
+     WHERE user_id=$1 AND is_del=false RETURNING id`,
+    [userId],
+  );
+  const collection = await client.query(
+    `UPDATE user_paper_collections
+     SET is_del=true,deleted_at=now(),deleted_by=$1
+     WHERE user_id=$1 AND is_del=false RETURNING pmid`,
+    [userId],
+  );
+  const searchRuns = await client.query(
+    `UPDATE search_runs
+     SET is_del=true,deleted_at=now(),deleted_by=$1
+     WHERE user_id=$1 AND is_del=false RETURNING id`,
+    [userId],
+  );
+  return {
+    removedChatCount: chatRooms.rowCount,
+    removedMessageCount: messages.rowCount,
+    removedPaperCount: collection.rowCount,
+    removedSearchCount: searchRuns.rowCount,
+  };
+}
+
 function paperFilters(input) {
   return parse(z.object({
     keyword: z.string().trim().max(120).optional(),
@@ -54,7 +87,10 @@ function csvCell(value) {
 }
 
 async function roomForUser(userId, roomId) {
-  const result = await query("SELECT * FROM chat_rooms WHERE id=$1 AND user_id=$2", [roomId, userId]);
+  const result = await query(
+    "SELECT * FROM chat_rooms WHERE id=$1 AND user_id=$2 AND is_del=false",
+    [roomId, userId],
+  );
   return result.rows[0];
 }
 
@@ -62,7 +98,9 @@ async function messagesForRoom(userId, roomId, limit = 200) {
   const result = await query(
     `SELECT m.id, m.role, m.content, m.created_at
      FROM chat_messages m JOIN chat_rooms r ON r.id=m.chat_room_id
-     WHERE m.chat_room_id=$1 AND r.user_id=$2 ORDER BY m.id DESC LIMIT $3`,
+     WHERE m.chat_room_id=$1 AND r.user_id=$2
+       AND m.is_del=false AND r.is_del=false
+     ORDER BY m.id DESC LIMIT $3`,
     [roomId, userId, limit]
   );
   return result.rows.reverse();
@@ -71,7 +109,8 @@ async function messagesForRoom(userId, roomId, limit = 200) {
 async function saveMessage(userId, roomId, role, content) {
   const result = await query(
     `INSERT INTO chat_messages (chat_room_id,user_id,role,content)
-     SELECT id,$2,$3,$4 FROM chat_rooms WHERE id=$1 AND user_id=$2 RETURNING *`,
+     SELECT id,$2,$3,$4 FROM chat_rooms
+     WHERE id=$1 AND user_id=$2 AND is_del=false RETURNING *`,
     [roomId, userId, role, content]
   );
   if (!result.rowCount) {
@@ -99,7 +138,11 @@ async function saveSearchRun(userId, input, papers, papersByYear) {
       const saved = await client.query(
         `INSERT INTO user_paper_collections(user_id,pmid,first_search_run_id)
          SELECT $1,unnest($2::text[]),$3
-         ON CONFLICT(user_id,pmid) DO NOTHING RETURNING pmid`,
+         ON CONFLICT(user_id,pmid) DO UPDATE
+         SET is_del=false,deleted_at=NULL,deleted_by=NULL,
+             first_search_run_id=EXCLUDED.first_search_run_id,saved_at=now()
+         WHERE user_paper_collections.is_del=true
+         RETURNING pmid`,
         [userId, papers.map((paper) => paper.pmid), runId]
       );
       savedCount = saved.rowCount;
@@ -175,17 +218,16 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   }));
 
   app.delete("/api/collection", asyncRoute(async (req, res) => {
-    const result = await query(
-      "DELETE FROM user_paper_collections WHERE user_id=$1 RETURNING pmid",
-      [req.user.id]
-    );
-    res.json({ removedCount: result.rowCount });
+    const result = await transaction((client) => resetUserWorkspace(client, req.user.id));
+    res.json(result);
   }));
 
   app.delete("/api/collection/:pmid", asyncRoute(async (req, res) => {
     const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
     const result = await query(
-      "DELETE FROM user_paper_collections WHERE user_id=$1 AND pmid=$2 RETURNING pmid",
+      `UPDATE user_paper_collections
+       SET is_del=true,deleted_at=now(),deleted_by=$1
+       WHERE user_id=$1 AND pmid=$2 AND is_del=false RETURNING pmid`,
       [req.user.id, pmid]
     );
     res.json({ removed: Boolean(result.rowCount), pmid });
@@ -204,7 +246,8 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     const result = await query(
       `SELECT array_remove(array_agg(DISTINCT p.journal ORDER BY p.journal), '') AS journals,
               min(p.publication_year) AS min_year, max(p.publication_year) AS max_year
-       FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid WHERE up.user_id=$1`,
+       FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
+       WHERE up.user_id=$1 AND up.is_del=false`,
       [req.user.id]
     );
     res.json(result.rows[0] || { journals: [], min_year: null, max_year: null });
@@ -222,13 +265,16 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   app.get("/api/overview", asyncRoute(async (req, res) => {
     const [summary, years, journals, latestRun] = await Promise.all([
       query(`SELECT count(*)::int AS total_papers, count(DISTINCT NULLIF(p.journal,''))::int AS total_journals
-             FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid WHERE up.user_id=$1`, [req.user.id]),
+             FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
+             WHERE up.user_id=$1 AND up.is_del=false`, [req.user.id]),
       query(`SELECT p.publication_year AS year, count(*)::int AS count FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
-             WHERE up.user_id=$1 AND p.publication_year IS NOT NULL GROUP BY p.publication_year ORDER BY p.publication_year`, [req.user.id]),
+             WHERE up.user_id=$1 AND up.is_del=false AND p.publication_year IS NOT NULL
+             GROUP BY p.publication_year ORDER BY p.publication_year`, [req.user.id]),
       query(`SELECT p.journal, count(*)::int AS count FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
-             WHERE up.user_id=$1 AND p.journal<>'' GROUP BY p.journal ORDER BY count DESC, p.journal LIMIT 10`, [req.user.id]),
+             WHERE up.user_id=$1 AND up.is_del=false AND p.journal<>''
+             GROUP BY p.journal ORDER BY count DESC, p.journal LIMIT 10`, [req.user.id]),
       query(`SELECT year_from, year_to, request_params
-             FROM search_runs WHERE user_id=$1 AND status='completed'
+             FROM search_runs WHERE user_id=$1 AND status='completed' AND is_del=false
              ORDER BY created_at DESC LIMIT 1`, [req.user.id]),
     ]);
     const collectedByYear = Object.fromEntries(years.rows.map((row) => [row.year, row.count]));
@@ -258,7 +304,8 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     const result = await query(
       `SELECT r.id,r.title,r.created_at,r.updated_at,count(rp.pmid)::int AS paper_count
        FROM chat_rooms r LEFT JOIN chat_room_papers rp ON rp.chat_room_id=r.id
-       WHERE r.user_id=$1 GROUP BY r.id ORDER BY r.updated_at DESC`,
+       WHERE r.user_id=$1 AND r.is_del=false
+       GROUP BY r.id ORDER BY r.updated_at DESC`,
       [req.user.id]
     );
     res.json({ conversations: result.rows });
@@ -267,7 +314,12 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   app.post("/api/chat/conversations/from-papers", asyncRoute(async (req, res) => {
     const input = parse(roomSchema, req.body);
     const owned = await query(
-      "SELECT * FROM pubmed_records WHERE pmid=ANY($1::text[]) AND pmid IN (SELECT pmid FROM user_paper_collections WHERE user_id=$2)",
+      `SELECT * FROM pubmed_records
+       WHERE pmid=ANY($1::text[])
+         AND pmid IN (
+           SELECT pmid FROM user_paper_collections
+           WHERE user_id=$2 AND is_del=false
+         )`,
       [input.pmids, req.user.id]
     );
     if (owned.rowCount !== new Set(input.pmids).size) return res.status(403).json({ error: "All papers must belong to your collection" });
@@ -304,7 +356,12 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   }));
 
   app.delete("/api/chat/conversations/:id", asyncRoute(async (req, res) => {
-    const result = await query("DELETE FROM chat_rooms WHERE id=$1 AND user_id=$2 RETURNING id", [req.params.id, req.user.id]);
+    const result = await query(
+      `UPDATE chat_rooms
+       SET is_del=true,deleted_at=now(),deleted_by=$2
+       WHERE id=$1 AND user_id=$2 AND is_del=false RETURNING id`,
+      [req.params.id, req.user.id],
+    );
     res.json({ removed: Boolean(result.rowCount) });
   }));
 
@@ -317,7 +374,9 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 
   const deleteHistoryHandler = asyncRoute(async (req, res) => {
     const result = await query(
-      `DELETE FROM chat_messages WHERE chat_room_id=$1 AND user_id=$2 RETURNING id`,
+      `UPDATE chat_messages
+       SET is_del=true,deleted_at=now(),deleted_by=$2
+       WHERE chat_room_id=$1 AND user_id=$2 AND is_del=false RETURNING id`,
       [req.params.id, req.user.id]
     );
     res.json({ conversationId: req.params.id, removedCount: result.rowCount });

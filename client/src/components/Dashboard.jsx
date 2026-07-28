@@ -61,7 +61,7 @@ export default function Dashboard({ session, preview = false }) {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [overview, setOverview] = useState(preview ? previewOverview : emptyOverview);
-  const [collectionStats, setCollectionStats] = useState(preview ? { added: 186, skipped: 32 } : { added: "—", skipped: "—" });
+  const [collectionStats, setCollectionStats] = useState(preview ? { added: 186, skipped: 32 } : { added: 0, skipped: 0 });
   const [papers, setPapers] = useState([]);
   const [paperTotal, setPaperTotal] = useState(0);
   const [selected, setSelected] = useState([]);
@@ -149,16 +149,25 @@ export default function Dashboard({ session, preview = false }) {
   const resetCollection = async () => {
     if (preview) return;
     const confirmed = window.confirm(
-      "현재 계정에 수집된 논문을 모두 삭제할까요?\n연결된 논문 채팅방의 논문 선택도 함께 해제되며, 이 작업은 되돌릴 수 없습니다.",
+      "현재 계정의 수집 논문과 모든 채팅을 초기화할까요?\n검색 이력과 개요 그래프도 함께 삭제되며, 이 작업은 되돌릴 수 없습니다.",
     );
     if (!confirmed) return;
-    setStatus("수집 데이터를 초기화하고 있어요…");
+    setStatus("수집 데이터와 채팅을 초기화하고 있어요…");
     try {
       const result = await call("/api/collection", { method: "DELETE" });
+      setOverview(emptyOverview);
+      setPapers([]);
+      setPaperTotal(0);
       setSelected([]);
-      setCollectionStats({ added: "—", skipped: "—" });
-      await Promise.allSettled([loadOverview(), loadPapers(), loadConversations()]);
-      setStatus(`${Number(result.removedCount ?? 0).toLocaleString()}건의 수집 데이터를 초기화했습니다.`);
+      setConversations([]);
+      setConversationId(null);
+      setMessages([]);
+      setCollectionStats({ added: 0, skipped: 0 });
+      setMobileSheet(false);
+      setStatus(
+        `논문 ${Number(result.removedPaperCount ?? 0).toLocaleString()}건과 채팅 `
+        + `${Number(result.removedChatCount ?? 0).toLocaleString()}개를 초기화했습니다.`,
+      );
     } catch (requestError) {
       setStatus(requestError.message);
     }
@@ -280,7 +289,7 @@ function Sidebar({ onCollect, onReset, status, onClose }) {
         </div>
         <label htmlFor="collect-max">최대 수집 건수</label><input id="collect-max" name="maxResults" type="number" min="1" max="100" defaultValue="50" required />
         <button className="primary-button collect-action" type="submit"><span>＋</span> 논문 수집하기</button>
-        <button className="reset-button collect-action" type="button" onClick={onReset}><span aria-hidden="true">↺</span> 수집 데이터 초기화</button>
+        <button className="reset-button collect-action" type="button" onClick={onReset}><span aria-hidden="true">↺</span> 수집 데이터 및 채팅 초기화</button>
         <p className="form-status" role="status">{status}</p>
       </form>
       <div className="sidebar-note"><span>✦</span> PubMed 논문 기반 탐색 도구입니다.</div>
@@ -344,7 +353,7 @@ function Papers({ active, papers, total, selected, onToggle, onSearch, onChat })
   const download = () => {
     const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...sortedPapers.map((p) => [p.pmid, p.title, p.abstract, p.journal, p.pubYear, p.authors])];
     const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
-    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "pubmed-metadata.csv"; link.click(); URL.revokeObjectURL(link.href);
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "publium-pubmed-metadata.csv"; link.click(); URL.revokeObjectURL(link.href);
   };
   return (
     <section id="papers" className={`tab-panel ${active ? "is-active" : ""}`}>

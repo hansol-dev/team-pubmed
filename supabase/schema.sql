@@ -235,6 +235,9 @@ create table if not exists public.search_runs (
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  is_del boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid,
   constraint search_runs_owner_key unique (id, user_id),
   constraint search_runs_query_not_blank check (btrim(query) <> ''),
   constraint search_runs_year_from_range
@@ -256,6 +259,11 @@ create table if not exists public.search_runs (
   constraint search_runs_request_params_object
     check (jsonb_typeof(request_params) = 'object')
 );
+
+alter table public.search_runs
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid;
 
 create index if not exists search_runs_user_created_idx
   on public.search_runs (user_id, created_at desc);
@@ -294,12 +302,20 @@ create table if not exists public.user_paper_collections (
   first_search_run_id uuid,
   saved_at timestamptz not null default now(),
   notes text,
+  is_del boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid,
   primary key (user_id, pmid),
   constraint user_paper_collections_first_search_fk
     foreign key (first_search_run_id, user_id)
     references public.search_runs(id, user_id)
     on delete set null (first_search_run_id)
 );
+
+alter table public.user_paper_collections
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid;
 
 create index if not exists user_paper_collections_saved_idx
   on public.user_paper_collections (user_id, saved_at desc);
@@ -314,10 +330,18 @@ create table if not exists public.chat_rooms (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   last_message_at timestamptz,
+  is_del boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid,
   constraint chat_rooms_owner_key unique (id, user_id),
   constraint chat_rooms_title_not_blank check (btrim(title) <> ''),
   constraint chat_rooms_status check (status in ('active', 'archived'))
 );
+
+alter table public.chat_rooms
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid;
 
 create index if not exists chat_rooms_user_recent_idx
   on public.chat_rooms (
@@ -370,6 +394,9 @@ create table if not exists public.chat_messages (
   completion_tokens integer,
   client_message_id uuid,
   created_at timestamptz not null default now(),
+  is_del boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid,
   constraint chat_messages_room_owner_fk
     foreign key (chat_room_id, user_id)
     references public.chat_rooms(id, user_id)
@@ -386,6 +413,11 @@ create table if not exists public.chat_messages (
   constraint chat_messages_client_id_unique
     unique (chat_room_id, client_message_id)
 );
+
+alter table public.chat_messages
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid;
 
 create index if not exists chat_messages_room_order_idx
   on public.chat_messages (chat_room_id, id);
@@ -471,6 +503,8 @@ create table if not exists public.paper_chunks (
   embedding extensions.vector(1536),
   embedding_model text,
   created_at timestamptz not null default now(),
+  is_del boolean not null default false,
+  deleted_at timestamptz,
   constraint paper_chunks_document_pmid_fk
     foreign key (document_id, pmid)
     references public.paper_documents(id, pmid)
@@ -490,6 +524,10 @@ create table if not exists public.paper_chunks (
       )
     )
 );
+
+alter table public.paper_chunks
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz;
 
 create index if not exists paper_chunks_document_order_idx
   on public.paper_chunks (document_id, chunk_index);
@@ -546,7 +584,7 @@ drop policy if exists "search_runs_own_all" on public.search_runs;
 create policy "search_runs_own_all"
   on public.search_runs for all
   to authenticated
-  using (user_id = (select auth.uid()))
+  using (user_id = (select auth.uid()) and not is_del)
   with check (user_id = (select auth.uid()));
 
 drop policy if exists "search_run_papers_own_all"
@@ -562,7 +600,7 @@ drop policy if exists "collections_select_own"
 create policy "collections_select_own"
   on public.user_paper_collections for select
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (user_id = (select auth.uid()) and not is_del);
 
 drop policy if exists "collections_insert_own"
   on public.user_paper_collections;
@@ -590,7 +628,7 @@ drop policy if exists "chat_rooms_own_all" on public.chat_rooms;
 create policy "chat_rooms_own_all"
   on public.chat_rooms for all
   to authenticated
-  using (user_id = (select auth.uid()))
+  using (user_id = (select auth.uid()) and not is_del)
   with check (user_id = (select auth.uid()));
 
 drop policy if exists "chat_room_papers_own_all"
@@ -605,7 +643,7 @@ drop policy if exists "chat_messages_own_all" on public.chat_messages;
 create policy "chat_messages_own_all"
   on public.chat_messages for all
   to authenticated
-  using (user_id = (select auth.uid()))
+  using (user_id = (select auth.uid()) and not is_del)
   with check (user_id = (select auth.uid()));
 
 drop policy if exists "paper_documents_read_if_collected"
@@ -619,6 +657,7 @@ create policy "paper_documents_read_if_collected"
       from public.user_paper_collections collection
       where collection.user_id = (select auth.uid())
         and collection.pmid = paper_documents.pmid
+        and not collection.is_del
     )
   );
 
@@ -633,7 +672,9 @@ create policy "paper_chunks_read_if_collected"
       from public.user_paper_collections collection
       where collection.user_id = (select auth.uid())
         and collection.pmid = paper_chunks.pmid
+        and not collection.is_del
     )
+    and not paper_chunks.is_del
   );
 
 -- Vector retrieval is restricted to papers fixed to a room owned by the
@@ -669,8 +710,13 @@ as $$
    and document.is_current
   join public.chat_room_papers room_paper
     on room_paper.pmid = chunk.pmid
+  join public.chat_rooms room
+    on room.id = room_paper.chat_room_id
+   and room.user_id = room_paper.user_id
   where room_paper.chat_room_id = p_chat_room_id
     and room_paper.user_id = (select auth.uid())
+    and not room.is_del
+    and not chunk.is_del
     and chunk.embedding is not null
     and 1 - (chunk.embedding <=> p_query_embedding) >= p_match_threshold
   order by chunk.embedding <=> p_query_embedding
@@ -700,13 +746,17 @@ grant execute on function public.match_chat_room_chunks(
 -- backend-only; user-owned tables remain directly usable by the React client.
 grant select on public.pubmed_records to authenticated;
 grant select, insert, update on public.user_profiles to authenticated;
-grant select, insert, update, delete on public.search_runs to authenticated;
-grant select, insert, update, delete on public.search_run_papers to authenticated;
-grant select, insert, update, delete
+revoke delete on public.search_runs, public.search_run_papers,
+  public.user_paper_collections, public.chat_rooms,
+  public.chat_room_papers, public.chat_messages
+from authenticated;
+grant select, insert, update on public.search_runs to authenticated;
+grant select, insert, update on public.search_run_papers to authenticated;
+grant select, insert, update
   on public.user_paper_collections to authenticated;
-grant select, insert, update, delete on public.chat_rooms to authenticated;
-grant select, insert, update, delete on public.chat_room_papers to authenticated;
-grant select, insert, update, delete on public.chat_messages to authenticated;
+grant select, insert, update on public.chat_rooms to authenticated;
+grant select, insert, update on public.chat_room_papers to authenticated;
+grant select, insert, update on public.chat_messages to authenticated;
 grant select on public.paper_documents to authenticated;
 grant select on public.paper_chunks to authenticated;
 grant usage, select on sequence public.chat_messages_id_seq to authenticated;
