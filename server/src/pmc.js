@@ -156,14 +156,24 @@ export async function retrieveRoomContext(userId, roomId, question, limit = 8) {
   if (embedding) {
     try {
       const result = await query(
-        `SELECT pc.pmid, pc.section, pc.content,
-                1 - (pc.embedding <=> $3::extensions.vector) AS relevance
-         FROM chat_room_papers rp
-         JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id
-         JOIN paper_chunks pc ON pc.pmid=rp.pmid
-         JOIN paper_documents pd ON pd.id=pc.document_id AND pd.is_current
-         WHERE rp.chat_room_id=$1 AND r.user_id=$2 AND pc.embedding IS NOT NULL
-         ORDER BY pc.embedding <=> $3::extensions.vector LIMIT $4`,
+        `WITH ranked AS (
+           SELECT pc.pmid,pc.section,pc.content,rp.position,
+                  pc.embedding <=> $3::extensions.vector AS distance,
+                  row_number() OVER (
+                    PARTITION BY pc.pmid
+                    ORDER BY pc.embedding <=> $3::extensions.vector
+                  ) AS paper_rank
+           FROM chat_room_papers rp
+           JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id
+           JOIN paper_chunks pc ON pc.pmid=rp.pmid
+           JOIN paper_documents pd ON pd.id=pc.document_id AND pd.is_current
+           WHERE rp.chat_room_id=$1 AND r.user_id=$2 AND pc.embedding IS NOT NULL
+         )
+         SELECT pmid,section,content,1-distance AS relevance
+         FROM ranked
+         WHERE paper_rank<=2
+         ORDER BY paper_rank,position,distance
+         LIMIT $4`,
         [roomId, userId, JSON.stringify(embedding), limit]
       );
       chunks = result.rows;
@@ -173,24 +183,51 @@ export async function retrieveRoomContext(userId, roomId, question, limit = 8) {
   }
   if (!chunks.length) {
     const result = await query(
-    `SELECT pc.pmid, pc.section, pc.content, NULL::float AS relevance
-     FROM chat_room_papers rp JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id
-     JOIN paper_chunks pc ON pc.pmid=rp.pmid JOIN paper_documents pd ON pd.id=pc.document_id AND pd.is_current
-     WHERE rp.chat_room_id=$1 AND r.user_id=$2
-     ORDER BY CASE WHEN pc.section='초록' THEN 0 ELSE 1 END, pc.chunk_index LIMIT $3`,
+    `WITH ranked AS (
+       SELECT pc.pmid,pc.section,pc.content,rp.position,
+              row_number() OVER (
+                PARTITION BY pc.pmid
+                ORDER BY CASE WHEN pc.section='초록' THEN 0 ELSE 1 END,pc.chunk_index
+              ) AS paper_rank
+       FROM chat_room_papers rp
+       JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id
+       JOIN paper_chunks pc ON pc.pmid=rp.pmid
+       JOIN paper_documents pd ON pd.id=pc.document_id AND pd.is_current
+       WHERE rp.chat_room_id=$1 AND r.user_id=$2
+     )
+     SELECT pmid,section,content,NULL::float AS relevance
+     FROM ranked
+     WHERE paper_rank<=2
+     ORDER BY paper_rank,position
+     LIMIT $3`,
     [roomId, userId, limit]
   );
     chunks = result.rows;
   }
   const abstracts = await query(
     `SELECT p.pmid,'초록' AS section,
-            CASE WHEN p.abstract<>'' THEN p.abstract ELSE p.title || E'\n초록이 제공되지 않습니다.' END AS content,
-            NULL::float AS relevance
+            CASE WHEN COALESCE(p.abstract,'')<>'' THEN p.abstract
+                 ELSE COALESCE(p.title,'제목 없음') || E'\n초록이 제공되지 않습니다.' END AS content,
+            NULL::float AS relevance, rp.position
      FROM chat_room_papers rp JOIN pubmed_records p ON p.pmid=rp.pmid
      WHERE rp.chat_room_id=$1 AND rp.user_id=$2
-       AND NOT EXISTS (SELECT 1 FROM paper_documents d WHERE d.pmid=p.pmid AND d.is_current)
      ORDER BY rp.position`,
     [roomId, userId]
   );
-  return [...chunks, ...abstracts.rows].slice(0, limit);
+  const picked = new Set();
+  const balanced = [];
+  for (const paper of abstracts.rows) {
+    const bestChunk = chunks.find((item) => item.pmid === paper.pmid && !picked.has(item));
+    if (bestChunk) {
+      picked.add(bestChunk);
+      balanced.push(bestChunk);
+    } else {
+      balanced.push(paper);
+    }
+  }
+  for (const chunk of chunks) {
+    if (balanced.length >= Math.max(limit, abstracts.rowCount)) break;
+    if (!picked.has(chunk)) balanced.push(chunk);
+  }
+  return balanced.slice(0, Math.max(limit, abstracts.rowCount));
 }

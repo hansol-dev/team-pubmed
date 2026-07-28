@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api, stream } from "../lib/api";
 import { supabase } from "../lib/supabase";
 
@@ -137,8 +139,37 @@ export default function Dashboard({ session }) {
   const openConversation = async (id) => {
     setConversationId(id);
     setTab("chat");
-    const body = await call(`/api/chat/${encodeURIComponent(id)}/messages`);
-    setMessages(body.messages ?? body.items ?? body.data ?? (Array.isArray(body) ? body : []));
+    const [historyBody, detailBody] = await Promise.all([
+      call(`/api/chat/${encodeURIComponent(id)}/messages`),
+      call(`/api/chat/conversations/${encodeURIComponent(id)}`),
+    ]);
+    setMessages(historyBody.messages ?? historyBody.items ?? historyBody.data ?? (Array.isArray(historyBody) ? historyBody : []));
+    const detailRoom = detailBody.conversation ?? {};
+    setConversations((items) => items.map((item) => {
+      const itemId = item.id ?? item.conversationId ?? item.conversation_id;
+      return String(itemId) === String(id) ? { ...item, ...detailRoom, papers: detailBody.papers ?? [] } : item;
+    }));
+  };
+
+  const createEmptyChat = async (title) => {
+    const result = await call("/api/chat/conversations/from-papers", {
+      method: "POST",
+      body: JSON.stringify({ pmids: [], title }),
+    });
+    const room = result.conversation ?? result;
+    const id = room.id ?? room.conversationId ?? room.conversation_id;
+    await loadConversations();
+    if (id) await openConversation(id);
+  };
+
+  const deleteConversation = async (id) => {
+    if (!id) return;
+    await call(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+    setConversations((items) => items.filter((item) => String(item.id ?? item.conversationId ?? item.conversation_id) !== String(id)));
+    if (String(conversationId) === String(id)) {
+      setConversationId(null);
+      setMessages([]);
+    }
   };
 
   const sendSelectedToChat = async () => {
@@ -152,6 +183,12 @@ export default function Dashboard({ session }) {
     setSelected([]);
     await loadConversations();
     if (id) await openConversation(id);
+  };
+
+  const resetChatSelection = () => {
+    setSelected([]);
+    setConversationId(null);
+    setMessages([]);
   };
 
   const logout = () => supabase?.auth.signOut();
@@ -173,7 +210,7 @@ export default function Dashboard({ session }) {
         {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
         <Overview active={tab === "overview"} stats={overview} collectionStats={collectionStats} />
         <Papers active={tab === "papers"} papers={papers} total={paperTotal} selected={selected} onToggle={togglePaper} onSearch={search} onChat={sendSelectedToChat} />
-        <Chat active={tab === "chat"} token={token} conversations={conversations} conversationId={conversationId} messages={messages} setMessages={setMessages} onOpen={openConversation} call={call} />
+        <Chat active={tab === "chat"} token={token} conversations={conversations} conversationId={conversationId} selectedCount={selected.length} messages={messages} setMessages={setMessages} onOpen={openConversation} onNewChat={createEmptyChat} onDeleteConversation={deleteConversation} onResetSelection={resetChatSelection} call={call} />
       </section>
       {loading > 0 && <div className="loading-indicator is-visible" role="status"><div className="loading-panel"><span className="loading-spinner" /><p>데이터를 불러오는 중입니다.</p></div></div>}
     </main>
@@ -204,7 +241,7 @@ function Sidebar({ onCollect, status, onClose }) {
 function Overview({ active, stats, collectionStats }) {
   const yearEntries = Object.entries(stats.papersByYear);
   return (
-    <section className={`tab-panel ${active ? "is-active" : ""}`}>
+    <section id="overview" className={`tab-panel ${active ? "is-active" : ""}`}>
       <div className="metric-grid">
         <Metric tone="purple" icon="⌘" label="전체 논문" value={stats.totalPapers} note="저장된 논문 수" />
         <Metric tone="mint" icon="＋" label="이번 수집 신규" value={collectionStats.added} note="새로 추가된 논문" />
@@ -238,46 +275,75 @@ function Bars({ entries }) {
 }
 
 function Papers({ active, papers, total, selected, onToggle, onSearch, onChat }) {
+  const [sortMethod, setSortMethod] = useState("newest");
   const selectedIds = useMemo(() => new Set(selected.map((paper) => String(paper.id))), [selected]);
+  const sortedPapers = useMemo(() => [...papers].sort((left, right) => {
+    if (sortMethod === "oldest") {
+      return (Number(left.pubYear) || 9999) - (Number(right.pubYear) || 9999) ||
+        String(left.pmid || "").localeCompare(String(right.pmid || ""), "en", { numeric: true });
+    }
+    if (sortMethod === "collected") {
+      return new Date(right.collected_at || right.collectedAt || 0) - new Date(left.collected_at || left.collectedAt || 0);
+    }
+    if (sortMethod === "title") {
+      return String(left.title || "").localeCompare(String(right.title || ""), "ko");
+    }
+    return (Number(right.pubYear) || 0) - (Number(left.pubYear) || 0) ||
+      String(right.pmid || "").localeCompare(String(left.pmid || ""), "en", { numeric: true });
+  }), [papers, sortMethod]);
   const download = () => {
-    const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...papers.map((p) => [p.pmid, p.title, p.abstract, p.journal, p.pubYear, p.authors])];
+    const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...sortedPapers.map((p) => [p.pmid, p.title, p.abstract, p.journal, p.pubYear, p.authors])];
     const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
     const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "pubmed-metadata.csv"; link.click(); URL.revokeObjectURL(link.href);
   };
   return (
     <section id="papers" className={`tab-panel ${active ? "is-active" : ""}`}>
       <article className="clay-card table-card metadata-card">
-        <div className="card-heading"><div><p className="eyebrow">COLLECTED RECORDS</p><h2>논문 수집 목록</h2></div><button className="secondary-button" onClick={download}>↓ CSV 다운로드</button></div>
+        <div className="card-heading paper-card-heading">
+          <div><p className="eyebrow">COLLECTED RECORDS</p><h2>논문 수집 목록</h2></div>
+          <div className="paper-heading-actions">
+            <button className="secondary-button" type="button" onClick={download}>↓ CSV 다운로드</button>
+            <button className="secondary-button chat-send-button" type="button" disabled={!selected.length} onClick={onChat}>선택 {selected.length}/5편 챗봇으로 보내기 <span>→</span></button>
+          </div>
+        </div>
         <form className="filter-bar" onSubmit={onSearch}><input name="keyword" placeholder="제목·초록·수집 검색어 검색" /><input name="yearFrom" type="number" placeholder="시작 연도" /><input name="yearTo" type="number" placeholder="종료 연도" /><input name="journal" placeholder="저널명" /><button className="primary-button">검색</button></form>
-        <div className="selection-toolbar"><p className="result-summary">{total}건의 수집 논문입니다.</p><button className="primary-button" disabled={!selected.length} onClick={onChat}>선택 {selected.length}/5편 챗봇으로 보내기 <span>→</span></button></div>
-        {!papers.length ? <p className="result-summary">조건에 맞는 논문이 없습니다.</p> : <div className="paper-list">{papers.map((paper) => <PaperCard key={paper.id} paper={paper} checked={selectedIds.has(String(paper.id))} onToggle={() => onToggle(paper)} />)}</div>}
+        <div className="selection-toolbar">
+          <label className="paper-sort" aria-label="논문 정렬 방법"><select value={sortMethod} onChange={(event) => setSortMethod(event.target.value)}><option value="newest">최신 논문순</option><option value="oldest">오래된 논문순</option><option value="collected">최근 수집순</option><option value="title">제목순</option></select></label>
+          <p className="result-summary collection-count">총 <strong>{total}</strong>건</p>
+        </div>
+        {!sortedPapers.length ? <p className="result-summary">조건에 맞는 논문이 없습니다.</p> : <div className="paper-list">{sortedPapers.map((paper) => <PaperCard key={paper.id} paper={paper} checked={selectedIds.has(String(paper.id))} onToggle={() => onToggle(paper)} />)}</div>}
       </article>
     </section>
   );
 }
 
 function PaperCard({ paper, checked, onToggle }) {
+  const [abstractExpanded, setAbstractExpanded] = useState(false);
   const pubmed = paper.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${paper.pmid}/` : null;
   const doi = paper.doi ? `https://doi.org/${paper.doi}` : null;
   const pmc = paper.pmcid ? `https://pmc.ncbi.nlm.nih.gov/articles/${paper.pmcid}/` : paper.fullTextUrl;
   return (
     <article className={`paper-card ${checked ? "is-selected" : ""}`}>
       <div className="paper-card-head">
-        <label className="paper-select"><input type="checkbox" checked={checked} onChange={onToggle} /><span>챗봇 분석에 선택</span></label>
-        <div><h3>{paper.title || "제목 없음"}</h3><div className="paper-meta"><span className="meta-chip journal-chip">{paper.journal || "저널 정보 없음"}</span><span className="meta-chip">{paper.pubYear || "연도 정보 없음"}</span><span className="pmid-chip">PMID {paper.pmid || "-"}</span></div></div>
+        <label className="paper-select" aria-label={`${paper.title || "논문"} 선택`} title="챗봇 분석에 선택"><input type="checkbox" checked={checked} onChange={onToggle} /></label>
+        <div><div className="paper-meta"><span className="meta-chip journal-chip">{paper.journal || "저널 정보 없음"}</span><span className="meta-chip">{paper.pubYear || "연도 정보 없음"}</span><span className="pmid-chip">PMID {paper.pmid || "-"}</span></div><h3>{paper.title || "제목 없음"}</h3></div>
       </div>
-      <p className="paper-author"><strong>저자</strong> {Array.isArray(paper.authors) ? paper.authors.join(", ") : paper.authors || "등록된 저자 정보가 없습니다."}</p>
-      <p className="abstract-preview">{paper.abstract || "초록 내용 없음"}</p>
-      <details className="abstract-details"><summary>초록 전체 보기</summary><p>{paper.abstract || "초록 내용 없음"}</p></details>
+      <p className="paper-author"><strong>저자</strong><span>{Array.isArray(paper.authors) ? paper.authors.join(", ") : paper.authors || "등록된 저자 정보가 없습니다."}</span></p>
+      <div className="abstract-heading"><span>ABSTRACT</span><button className="abstract-toggle" type="button" onClick={() => setAbstractExpanded((value) => !value)} aria-expanded={abstractExpanded}>{abstractExpanded ? "초록 접기 ↑" : "초록 전체 보기 ↓"}</button></div>
+      <p className={`abstract-preview ${abstractExpanded ? "is-expanded" : ""}`}>{paper.abstract || "초록 내용 없음"}</p>
       <div className="paper-links">{pubmed && <a href={pubmed} target="_blank" rel="noreferrer">PubMed 보기 ↗</a>}{doi && <a href={doi} target="_blank" rel="noreferrer">출판사 원문 ↗</a>}{pmc && <a className="full-text-link" href={pmc} target="_blank" rel="noreferrer">PMC 무료 원문 ↗</a>}{!doi && !pmc && <span>초록만 제공</span>}</div>
     </article>
   );
 }
 
-function Chat({ active, token, conversations, conversationId, messages, setMessages, onOpen, call }) {
+function Chat({ active, token, conversations, conversationId, selectedCount, messages, setMessages, onOpen, onNewChat, onDeleteConversation, onResetSelection, call }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [newChatTitle, setNewChatTitle] = useState("");
+  const [creatingChat, setCreatingChat] = useState(false);
   const current = conversations.find((item) => String(item.id ?? item.conversationId) === String(conversationId));
+  const currentPapers = current?.papers ?? [];
   const send = async (event) => {
     event.preventDefault();
     const message = input.trim();
@@ -300,18 +366,36 @@ function Chat({ active, token, conversations, conversationId, messages, setMessa
     await call(`/api/chat/${encodeURIComponent(conversationId)}/messages`, { method: "DELETE" });
     setMessages([]);
   };
+  const removeRoom = async () => {
+    if (!conversationId || !window.confirm("현재 논문 채팅방을 삭제할까요? 대화 내역도 함께 삭제됩니다.")) return;
+    await onDeleteConversation(conversationId);
+  };
+  const createNamedChat = async (event) => {
+    event.preventDefault();
+    const title = newChatTitle.trim();
+    if (!title || creatingChat) return;
+    setCreatingChat(true);
+    try {
+      await onNewChat(title);
+      setNewChatTitle("");
+      setNewChatOpen(false);
+    } finally {
+      setCreatingChat(false);
+    }
+  };
   return (
     <section id="chat" className={`tab-panel ${active ? "is-active" : ""}`}>
       <div className="chat-layout">
-        <aside className="conversation-list clay-card"><div><p className="eyebrow">CONVERSATIONS</p><h2>논문 채팅방</h2></div>{conversations.length ? conversations.map((room) => { const id = room.id ?? room.conversationId; return <button className={String(id) === String(conversationId) ? "is-active" : ""} key={id} onClick={() => onOpen(id)}><strong>{room.title || "논문 분석"}</strong><small>{room.paperCount ?? room.paper_count ?? room.papers?.length ?? 0}편의 논문</small></button>; }) : <p className="result-summary">논문을 선택해 새 채팅을 시작하세요.</p>}</aside>
+        <aside className="conversation-list clay-card"><div><p className="eyebrow">CONVERSATIONS</p><h2>논문 채팅방</h2></div><button className="new-chat-button" type="button" onClick={() => setNewChatOpen(true)}><strong>＋ 새 채팅</strong><small>논문 없이 시작</small></button>{conversations.length ? conversations.map((room) => { const id = room.id ?? room.conversationId; return <button className={String(id) === String(conversationId) ? "is-active" : ""} key={id} onClick={() => onOpen(id)}><strong>{room.title || "논문 분석"}</strong><small>{room.paperCount ?? room.paper_count ?? room.papers?.length ?? 0}편의 논문</small></button>; }) : <p className="result-summary">새 채팅을 열거나 논문을 선택해 시작하세요.</p>}</aside>
         <article className="chat-card clay-card">
-          <div className="card-heading"><div><p className="eyebrow">PAPER-GROUNDED AI</p><h2>{current?.title || "AI 논문 탐색 도우미"}</h2></div><div className="chat-heading-actions"><span className="safe-badge">의료 조언 제외</span><button className="secondary-button danger-button" onClick={clear} disabled={!conversationId}>대화 내역 삭제</button></div></div>
-          {current?.papers?.length > 0 && <div className="chat-paper-chips">{current.papers.map((paper) => <span key={paper.id ?? paper.pmid}>PMID {paper.pmid}</span>)}</div>}
-          <div className="chat-log">{!conversationId || !messages.length ? <div className="chat-message assistant intro-message"><span className="avatar">✦</span><div>{conversationId ? INTRO : "논문 목록에서 최대 5편을 선택해 챗봇으로 보내주세요."}</div></div> : messages.map((message, index) => <div className={`chat-message ${message.role}`} key={message.id ?? index}><span className="avatar">{message.role === "assistant" ? "✦" : "나"}</span><div>{message.content}</div></div>)}</div>
-          <form className="chat-form" onSubmit={send}><input value={input} onChange={(event) => setInput(event.target.value)} placeholder={conversationId ? "선택한 논문에 대해 질문하세요" : "먼저 논문을 선택해 주세요"} disabled={!conversationId || sending} required /><button className="primary-button" disabled={!conversationId || sending}>보내기 <span>→</span></button></form>
+          <div className="card-heading chat-card-heading"><div className="chat-heading-top"><p className="eyebrow">PAPER-GROUNDED AI</p><div className="chat-heading-actions"><button className="secondary-button reset-selection-button" type="button" onClick={onResetSelection} disabled={!conversationId && !selectedCount}>선택 논문 초기화</button><button className="secondary-button history-delete-button" type="button" onClick={clear} disabled={!conversationId}>대화 내역 삭제</button><button className="secondary-button room-delete-button" type="button" onClick={removeRoom} disabled={!conversationId || sending}>채팅방 삭제</button></div></div><h2>{current?.title || "AI 논문 탐색 도우미"}</h2></div>
+          {currentPapers.length > 0 && <div className="chat-paper-chips">{currentPapers.map((paper) => <span key={paper.id ?? paper.pmid}>PMID {paper.pmid}</span>)}</div>}
+          <div className="chat-log">{!conversationId || !messages.length ? <div className="chat-message assistant intro-message"><span className="avatar">✦</span><div>{conversationId ? (currentPapers.length ? INTRO : "새 채팅입니다. PubMed 검색 전략이나 연구 질문을 함께 정리해보세요.") : "논문 채팅방을 선택하거나 새 채팅을 시작해주세요."}</div></div> : messages.map((message, index) => <div className={`chat-message ${message.role}`} key={message.id ?? index}><span className="avatar">{message.role === "assistant" ? "✦" : "나"}</span><div className="message-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></div>)}</div>
+          <form className="chat-form" onSubmit={send}><input value={input} onChange={(event) => setInput(event.target.value)} placeholder={conversationId ? (currentPapers.length ? "선택한 논문에 대해 질문하세요" : "연구 질문이나 PubMed 검색 전략을 물어보세요") : "먼저 채팅방을 열어주세요"} disabled={!conversationId || sending} required /><button className="primary-button" disabled={!conversationId || sending}>보내기 <span>→</span></button></form>
           <p className="chat-disclaimer">의료적 진단·처방·복용 방법은 제공하지 않습니다.</p>
         </article>
       </div>
+      {newChatOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creatingChat) setNewChatOpen(false); }}><form className="new-chat-dialog clay-card" role="dialog" aria-modal="true" aria-labelledby="new-chat-title" onSubmit={createNamedChat}><p className="eyebrow">NEW CONVERSATION</p><h2 id="new-chat-title">새 채팅방 이름</h2><p>대화 목적을 알아보기 쉬운 이름으로 입력해주세요.</p><input autoFocus maxLength={120} value={newChatTitle} onChange={(event) => setNewChatTitle(event.target.value)} placeholder="예: 당뇨병 연구 질문 정리" disabled={creatingChat} required /><div><button className="secondary-button" type="button" onClick={() => setNewChatOpen(false)} disabled={creatingChat}>취소</button><button className="primary-button" type="submit" disabled={!newChatTitle.trim() || creatingChat}>{creatingChat ? "생성 중…" : "채팅방 생성"}</button></div></form></div>}
     </section>
   );
 }

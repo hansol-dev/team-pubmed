@@ -104,7 +104,7 @@ Render Dashboard에서 Blueprint를 연결하거나 기존 Python 서비스를 �
 | `SUPABASE_URL` | 예 | Supabase Project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | 예 | 서버 전용 service role/secret key |
 | `OPENAI_API_KEY` | 챗봇에 필수 | 서버 전용 OpenAI key |
-| `OPENAI_CHAT_MODEL` | 예 | 기본 `gpt-4.1-mini` |
+| `OPENAI_CHAT_MODEL` | 예 | 기본 `gpt-5.6-terra` |
 | `OPENAI_EMBEDDING_MODEL` | 예 | 기본 `text-embedding-3-small` |
 | `NCBI_EMAIL` | 권장 | NCBI 요청 식별용 운영 이메일 |
 | `NCBI_API_KEY` | 권장 | NCBI rate limit 완화용 key |
@@ -142,7 +142,15 @@ Vercel에서 같은 Git 저장소를 import하고 다음 값을 설정한다.
 | Install Command | `npm install` |
 | Build Command | `npm run build` |
 | Output Directory | `dist` |
-| Production Branch | `renewal` |
+| Production Branch | `deploy_vercel` |
+
+`client/vercel.json`은 Git 자동 배포를 `deploy_vercel` 브랜치에만 허용한다.
+따라서 `renewal`과 `main` 푸시는 Vercel 배포를 만들지 않으며, 검증된 `main`을
+`deploy_vercel`에 반영해 푸시할 때만 새 Production 배포가 생성된다.
+
+```text
+renewal -> main -> deploy_vercel -> Vercel Production
+```
 
 Vercel 환경변수:
 

@@ -21,7 +21,7 @@ const searchSchema = z.object({
   saveToCollection: z.boolean().optional().default(true),
 }).refine((value) => value.yearFrom <= value.yearTo, { message: "yearFrom must be <= yearTo" });
 const roomSchema = z.object({
-  pmids: z.array(z.string().regex(/^\d+$/)).min(1).max(5),
+  pmids: z.array(z.string().regex(/^\d+$/)).max(5).default([]),
   title: z.string().trim().max(120).optional(),
 });
 const chatSchema = z.object({
@@ -217,7 +217,7 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     const room = await transaction(async (client) => {
       const created = await client.query(
         "INSERT INTO chat_rooms(user_id,title) VALUES($1,$2) RETURNING *",
-        [req.user.id, input.title || owned.rows[0]?.title?.slice(0, 120) || "논문 분석"]
+        [req.user.id, input.title || owned.rows[0]?.title?.slice(0, 120) || (input.pmids.length ? "논문 분석" : "새 채팅")]
       );
       for (const [position, pmid] of [...new Set(input.pmids)].entries()) {
         await client.query(
@@ -300,23 +300,51 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     const evidence = context.map((item, index) =>
       `[근거 ${index + 1}] PMID ${item.pmid} / ${item.section}\n${item.content}`
     ).join("\n\n");
-    const system = `당신은 선택된 PubMed 논문만 분석하는 연구 보조자입니다.
+    const system = evidence
+      ? `당신은 선택된 PubMed 논문을 분석하는 연구 보조자입니다.
 제공된 근거 밖의 내용을 사실처럼 만들지 말고, 근거가 부족하면 명확히 말하세요.
-개인 진단·처방·복용량 안내는 하지 마세요. 한국어로 답하고, 주요 주장에는 PMID와 섹션을 표시하세요.
-답변은 핵심 답변, 연구 설계/대상, 주요 결과, 한계, 근거 PMID 순서로 구성하세요.
+선택된 논문이 여러 편이면 모든 논문을 빠짐없이 고려하고, 공통점·차이점·상충하는 결과를 종합하세요.
+개별 논문의 결과와 종합 해석을 구분하세요.
+사용자가 명시적으로 요청하지 않는 한 답변 본문에 PMID 번호, 내부 근거 번호, 원시 식별자를 표시하지 마세요.
+개인 진단·처방·복용량 안내는 하지 마세요. 한국어로 답하세요.
+항상 결론과 핵심 답변을 가장 먼저 제시한 뒤 근거와 세부 내용을 설명하세요.
+Markdown을 사용해 다음 순서로 작성하세요.
+## 결론
+2~4문장으로 직접 답하세요.
+## 핵심 근거
+짧은 불릿 목록으로 정리하세요.
+선택 논문이 여러 편이면 ## 논문 간 비교를 추가해 공통점과 차이점을 표나 불릿으로 정리하세요.
+마지막에는 ## 한계를 추가하세요.
+긴 문단을 피하고 문단은 최대 3문장으로 제한하세요.
 
-${evidence}`;
+${evidence}`
+      : `당신은 PubMed 연구 탐색을 돕는 연구 보조자입니다.
+현재 이 채팅방에는 선택된 논문이 없습니다. 특정 논문의 결과를 아는 것처럼 답하지 마세요.
+사용자의 연구 질문 구체화, PubMed 검색어·검색식 구성, 논문 선별 기준 정리를 도우세요.
+개인 진단·처방·복용량 안내는 하지 말고 한국어로 답하세요.
+항상 결론과 핵심 답변을 가장 먼저 제시한 뒤 근거와 세부 내용을 설명하세요.
+Markdown 제목과 짧은 불릿 목록을 사용하고, 한 문단은 최대 3문장으로 제한하세요.
+논문 분석이 필요하면 먼저 논문 목록에서 논문을 선택해 채팅방으로 보내도록 안내하세요.`;
     const client = new OpenAI({ apiKey: config.openaiApiKey });
-    const stream = await client.chat.completions.create({
-      model: config.chatModel,
-      temperature: 0.2,
-      stream: true,
-      messages: [
-        { role: "system", content: system },
-        ...history.slice(0, -1).map((item) => ({ role: item.role, content: item.content })),
-        { role: "user", content: input.message },
-      ],
-    });
+    let stream;
+    try {
+      stream = await client.chat.completions.create({
+        model: config.chatModel,
+        stream: true,
+        messages: [
+          { role: "system", content: system },
+          ...history.slice(0, -1).map((item) => ({ role: item.role, content: item.content })),
+          { role: "user", content: input.message },
+        ],
+      });
+    } catch (error) {
+      if (config.env !== "test") console.error("OpenAI stream startup failed", error);
+      const message = "AI 응답을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.";
+      emit(message);
+      await saveMessage(req.user.id, input.conversationId, "assistant", message);
+      res.write("event: done\ndata: {}\n\n");
+      return res.end();
+    }
     let answer = "";
     try {
       for await (const part of stream) {
