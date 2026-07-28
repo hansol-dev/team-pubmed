@@ -5,11 +5,19 @@ export default function Landing({ supabaseReady }) {
   const frameRef = useRef(null);
 
   const login = useCallback(async () => {
-    if (!supabase) return;
-    await supabase.auth.signInWithOAuth({
+    if (!supabase) {
+      window.alert(
+        "Supabase 로그인 설정이 필요합니다. client/.env에 VITE_SUPABASE_URL과 VITE_SUPABASE_ANON_KEY를 설정해 주세요.",
+      );
+      return;
+    }
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: window.location.origin },
     });
+    if (error) {
+      window.alert(`Google 로그인을 시작하지 못했습니다: ${error.message}`);
+    }
   }, []);
 
   const prepareLegacyLanding = useCallback(() => {
@@ -25,7 +33,7 @@ export default function Landing({ supabaseReady }) {
       });
       if (!supabaseReady) {
         link.title = "Supabase 환경변수를 먼저 설정해 주세요.";
-        link.setAttribute("aria-disabled", "true");
+        link.setAttribute("data-config-missing", "true");
       }
     });
 
