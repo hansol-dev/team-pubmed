@@ -29,6 +29,15 @@ const chatSchema = z.object({
   message: z.string().trim().min(1).max(4000),
 });
 
+export function fillYearRange(yearFrom, yearTo, counts = {}) {
+  if (!Number.isInteger(yearFrom) || !Number.isInteger(yearTo) || yearFrom > yearTo) return counts;
+  const completed = {};
+  for (let year = yearFrom; year <= yearTo; year += 1) {
+    completed[year] = Number(counts[year] ?? counts[String(year)] ?? 0);
+  }
+  return completed;
+}
+
 function paperFilters(input) {
   return parse(z.object({
     keyword: z.string().trim().max(120).optional(),
@@ -74,7 +83,7 @@ async function saveMessage(userId, roomId, role, content) {
   return result.rows[0];
 }
 
-async function saveSearchRun(userId, input, papers) {
+async function saveSearchRun(userId, input, papers, papersByYear) {
   return transaction(async (client) => {
     const runResult = await client.query(
       `INSERT INTO search_runs
@@ -82,7 +91,7 @@ async function saveSearchRun(userId, input, papers) {
          request_params,started_at,completed_at)
        VALUES ($1,$2,$3,$4,$5,'completed',$6,$6,$7::jsonb,now(),now()) RETURNING id`,
       [userId, input.keyword, input.yearFrom, input.yearTo, input.maxCount, papers.length,
-        JSON.stringify({ sort: "pub date", source: "pubmed" })]
+        JSON.stringify({ sort: "pub date", source: "pubmed", papersByYear })]
     );
     const runId = runResult.rows[0].id;
     let savedCount = 0;
@@ -141,10 +150,19 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 
   app.post("/api/collection/search", asyncRoute(async (req, res) => {
     const input = parse(searchSchema, req.body);
-    const papers = await searchPubMed(input);
+    const [papers, papersByYear] = await Promise.all([
+      searchPubMed(input),
+      countPubMedByYear(input),
+    ]);
     await upsertPapers(papers);
-    const saved = await saveSearchRun(req.user.id, input, papers);
-    res.json({ papers, total: papers.length, savedCount: saved.savedCount, searchRunId: saved.runId });
+    const saved = await saveSearchRun(req.user.id, input, papers, papersByYear);
+    res.json({
+      papers,
+      papersByYear,
+      total: papers.length,
+      savedCount: saved.savedCount,
+      searchRunId: saved.runId,
+    });
   }));
 
   app.post("/api/collection", asyncRoute(async (req, res) => {
@@ -202,18 +220,31 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   }));
 
   app.get("/api/overview", asyncRoute(async (req, res) => {
-    const [summary, years, journals] = await Promise.all([
+    const [summary, years, journals, latestRun] = await Promise.all([
       query(`SELECT count(*)::int AS total_papers, count(DISTINCT NULLIF(p.journal,''))::int AS total_journals
              FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid WHERE up.user_id=$1`, [req.user.id]),
       query(`SELECT p.publication_year AS year, count(*)::int AS count FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
              WHERE up.user_id=$1 AND p.publication_year IS NOT NULL GROUP BY p.publication_year ORDER BY p.publication_year`, [req.user.id]),
       query(`SELECT p.journal, count(*)::int AS count FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
              WHERE up.user_id=$1 AND p.journal<>'' GROUP BY p.journal ORDER BY count DESC, p.journal LIMIT 10`, [req.user.id]),
+      query(`SELECT year_from, year_to, request_params
+             FROM search_runs WHERE user_id=$1 AND status='completed'
+             ORDER BY created_at DESC LIMIT 1`, [req.user.id]),
     ]);
+    const collectedByYear = Object.fromEntries(years.rows.map((row) => [row.year, row.count]));
+    const latest = latestRun.rows[0];
+    const storedTrend = latest?.request_params?.papersByYear;
+    const papersByYear = latest
+      ? fillYearRange(
+          Number(latest.year_from),
+          Number(latest.year_to),
+          storedTrend && Object.keys(storedTrend).length ? storedTrend : collectedByYear,
+        )
+      : collectedByYear;
     res.json({
       totalPapers: summary.rows[0].total_papers,
       totalJournals: summary.rows[0].total_journals,
-      papersByYear: Object.fromEntries(years.rows.map((row) => [row.year, row.count])),
+      papersByYear,
       topJournals: journals.rows,
     });
   }));
@@ -334,9 +365,8 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 사용자가 명시적으로 요청하지 않는 한 답변 본문에 PMID 번호, 내부 근거 번호, 원시 식별자를 표시하지 마세요.
 개인 진단·처방·복용량 안내는 하지 마세요. 한국어로 답하세요.
 항상 결론과 핵심 답변을 가장 먼저 제시한 뒤 근거와 세부 내용을 설명하세요.
-Markdown을 사용해 다음 순서로 작성하세요.
-## 결론
-2~4문장으로 직접 답하세요.
+첫 답변은 '결론'이라는 제목을 붙이지 말고 2~4문장으로 바로 답하세요.
+그다음부터 Markdown을 사용해 다음 순서로 작성하세요.
 ## 핵심 근거
 짧은 불릿 목록으로 정리하세요.
 선택 논문이 여러 편이면 ## 논문 간 비교를 추가해 공통점과 차이점을 표나 불릿으로 정리하세요.
@@ -349,7 +379,8 @@ ${evidence}`
 사용자의 연구 질문 구체화, PubMed 검색어·검색식 구성, 논문 선별 기준 정리를 도우세요.
 개인 진단·처방·복용량 안내는 하지 말고 한국어로 답하세요.
 항상 결론과 핵심 답변을 가장 먼저 제시한 뒤 근거와 세부 내용을 설명하세요.
-Markdown 제목과 짧은 불릿 목록을 사용하고, 한 문단은 최대 3문장으로 제한하세요.
+첫 답변에는 '결론'이라는 제목을 붙이지 말고 바로 핵심 내용을 말하세요.
+이후 내용에는 Markdown 제목과 짧은 불릿 목록을 사용하고, 한 문단은 최대 3문장으로 제한하세요.
 논문 분석이 필요하면 먼저 논문 목록에서 논문을 선택해 채팅방으로 보내도록 안내하세요.`;
     const client = new OpenAI({ apiKey: config.openaiApiKey });
     let stream;

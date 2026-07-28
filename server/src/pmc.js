@@ -58,6 +58,26 @@ export function chunkSections(sections, maxChars = 4200, overlap = 400) {
   return chunks;
 }
 
+export function balanceRoomContext(overviews, chunks, limit = 8) {
+  const target = Math.max(limit, overviews.length);
+  const balanced = [...overviews];
+  const picked = new Set();
+
+  for (const overview of overviews) {
+    if (balanced.length >= target) break;
+    const bestChunk = chunks.find((item) => item.pmid === overview.pmid && !picked.has(item));
+    if (bestChunk) {
+      picked.add(bestChunk);
+      balanced.push(bestChunk);
+    }
+  }
+  for (const chunk of chunks) {
+    if (balanced.length >= target) break;
+    if (!picked.has(chunk)) balanced.push(chunk);
+  }
+  return balanced.slice(0, target);
+}
+
 async function embed(contents) {
   const client = getOpenAI();
   if (!client || !contents.length) return contents.map(() => null);
@@ -150,7 +170,7 @@ export async function ensurePaperDocument(pmid) {
   }
 }
 
-export async function retrieveRoomContext(userId, roomId, question, limit = 8) {
+export async function retrieveRoomContext(userId, roomId, question, limit = 10) {
   const embedding = (await embed([question]))[0];
   let chunks = [];
   if (embedding) {
@@ -204,30 +224,20 @@ export async function retrieveRoomContext(userId, roomId, question, limit = 8) {
   );
     chunks = result.rows;
   }
-  const abstracts = await query(
-    `SELECT p.pmid,'초록' AS section,
-            CASE WHEN COALESCE(p.abstract,'')<>'' THEN p.abstract
-                 ELSE COALESCE(p.title,'제목 없음') || E'\n초록이 제공되지 않습니다.' END AS content,
+  const overviews = await query(
+    `SELECT p.pmid,'논문 개요' AS section,
+            concat_ws(E'\n',
+              '제목: ' || COALESCE(NULLIF(p.title,''),'제목 없음'),
+              CASE WHEN COALESCE(p.journal,'')<>'' THEN '저널: ' || p.journal END,
+              CASE WHEN p.publication_year IS NOT NULL THEN '발행 연도: ' || p.publication_year::text END,
+              '초록: ' || CASE WHEN COALESCE(p.abstract,'')<>'' THEN p.abstract
+                              ELSE '초록이 제공되지 않습니다.' END
+            ) AS content,
             NULL::float AS relevance, rp.position
      FROM chat_room_papers rp JOIN pubmed_records p ON p.pmid=rp.pmid
      WHERE rp.chat_room_id=$1 AND rp.user_id=$2
      ORDER BY rp.position`,
     [roomId, userId]
   );
-  const picked = new Set();
-  const balanced = [];
-  for (const paper of abstracts.rows) {
-    const bestChunk = chunks.find((item) => item.pmid === paper.pmid && !picked.has(item));
-    if (bestChunk) {
-      picked.add(bestChunk);
-      balanced.push(bestChunk);
-    } else {
-      balanced.push(paper);
-    }
-  }
-  for (const chunk of chunks) {
-    if (balanced.length >= Math.max(limit, abstracts.rowCount)) break;
-    if (!picked.has(chunk)) balanced.push(chunk);
-  }
-  return balanced.slice(0, Math.max(limit, abstracts.rowCount));
+  return balanceRoomContext(overviews.rows, chunks, limit);
 }

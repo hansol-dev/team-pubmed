@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
-import { createApp } from "../src/app.js";
+import { createApp, fillYearRange } from "../src/app.js";
 
 const fakeAuth = (req, _res, next) => {
   req.user = { id: "11111111-1111-4111-8111-111111111111", email: "test@example.com" };
@@ -38,4 +38,11 @@ test("does not grant CORS access to an unrelated origin", async () => {
     .set("Origin", "https://untrusted.example");
   assert.equal(response.status, 200);
   assert.equal(response.headers["access-control-allow-origin"], undefined);
+});
+
+test("fills every year in the selected collection range", () => {
+  assert.deepEqual(
+    fillYearRange(2020, 2024, { 2020: 12, 2022: 31, 2024: 7 }),
+    { 2020: 12, 2021: 0, 2022: 31, 2023: 0, 2024: 7 },
+  );
 });

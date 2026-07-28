@@ -4,7 +4,18 @@ import Landing from "./components/Landing";
 import Dashboard from "./components/Dashboard";
 
 export default function App() {
-  const isPreview = new URLSearchParams(window.location.search).get("preview") === "1";
+  const query = new URLSearchParams(window.location.search);
+  const isLocalDevelopment = import.meta.env.DEV && query.get("dev") === "1";
+  const isPreview = query.get("preview") === "1";
+  const localDevelopmentSession = isLocalDevelopment
+    ? {
+        access_token: "publium-local-development",
+        user: {
+          email: "local-dev@publium.local",
+          user_metadata: { full_name: "로컬 테스트" },
+        },
+      }
+    : null;
   const previewSession = isPreview
     ? {
         access_token: "development-preview-token",
@@ -74,6 +85,7 @@ export default function App() {
     };
   }, []);
 
+  if (localDevelopmentSession) return <Dashboard session={localDevelopmentSession} />;
   if (previewSession) return <Dashboard session={previewSession} preview />;
   if (session === undefined) {
     return <div className="auth-loading"><span className="loading-spinner" /><p>Publium을 불러오는 중입니다.</p></div>;

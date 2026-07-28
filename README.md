@@ -84,6 +84,7 @@ DATABASE_SSL=true
 OPENAI_API_KEY=your-openai-key
 NCBI_EMAIL=your-email
 NCBI_API_KEY=your-optional-ncbi-key
+DEV_USER_ID=your-existing-supabase-user-uuid
 ```
 
 ### 3. Supabase 스키마
@@ -99,6 +100,12 @@ npm run dev
 
 - Frontend: <http://localhost:5173>
 - API health: <http://localhost:4000/api/health>
+
+Google 로그인 없이 로컬 기능을 테스트하려면 서버와 클라이언트를 실행한
+뒤 <http://localhost:5173/?dev=1>로 접속합니다. `DEV_USER_ID`는
+Supabase Authentication에 이미 존재하는 테스트 사용자 UUID여야 합니다.
+이 인증 우회는 Vite 개발 빌드와 로컬 개발 서버에서만 활성화되며 Vercel
+환경에서는 사용할 수 없습니다.
 
 ## 검증
 

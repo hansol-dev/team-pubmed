@@ -37,6 +37,7 @@ export const config = {
   databaseSsl: environment("DATABASE_SSL", "true").toLowerCase() !== "false",
   supabaseUrl: environment("SUPABASE_URL"),
   supabaseServiceRoleKey: environment("SUPABASE_SERVICE_ROLE_KEY"),
+  devUserId: environment("DEV_USER_ID"),
   openaiApiKey: environment("OPENAI_API_KEY"),
   chatModel: environment("OPENAI_CHAT_MODEL", "gpt-5.6-terra"),
   embeddingModel: environment("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
