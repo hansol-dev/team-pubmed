@@ -1,25 +1,37 @@
 services:
   - type: web
-    name: publium
-    branch: deploy
+    name: publium-api
+    branch: renewal
     autoDeployTrigger: commit
-    runtime: python
+    runtime: node
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --proxy-headers
-    healthCheckPath: /health
+    buildCommand: npm install
+    startCommand: npm run start -w server
+    healthCheckPath: /api/health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.10
+      - key: NODE_VERSION
+        value: 20.19.4
+      - key: NODE_ENV
+        value: production
       - key: DATABASE_URL
         sync: false
-      - key: HTTPS_ONLY
+      - key: DATABASE_SSL
         value: "true"
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: GOOGLE_CLIENT_ID
+      - key: OPENAI_CHAT_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: NCBI_EMAIL
         sync: false
-      - key: GOOGLE_CLIENT_SECRET
+      - key: NCBI_API_KEY
         sync: false
-      - key: SESSION_SECRET
-        generateValue: true
+      - key: NCBI_TOOL
+        value: publium

@@ -1,0 +1,24 @@
+{
+  "name": "publium-client",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.53.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@babel/helpers": "^7.29.7",
+    "@babel/types": "^7.29.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "caniuse-lite": "^1.0.30001806",
+    "vite": "^7.0.6"
+  }
+}
