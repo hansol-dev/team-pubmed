@@ -280,7 +280,7 @@ function Sidebar({ onCollect, onReset, status, onClose }) {
         </div>
         <label htmlFor="collect-max">최대 수집 건수</label><input id="collect-max" name="maxResults" type="number" min="1" max="100" defaultValue="50" required />
         <button className="primary-button collect-action" type="submit"><span>＋</span> 논문 수집하기</button>
-        <button className="reset-button collection-reset-button" type="button" onClick={onReset}>수집 데이터 초기화</button>
+        <button className="reset-button collect-action" type="button" onClick={onReset}><span aria-hidden="true">↺</span> 수집 데이터 초기화</button>
         <p className="form-status" role="status">{status}</p>
       </form>
       <div className="sidebar-note"><span>✦</span> PubMed 논문 기반 탐색 도구입니다.</div>
