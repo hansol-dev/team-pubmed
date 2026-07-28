@@ -20,9 +20,57 @@ export default function App() {
       setSession(null);
       return undefined;
     }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
-    return () => data.subscription.unsubscribe();
+    let active = true;
+    let authEventReceived = false;
+    const currentUrl = new URL(window.location.href);
+    const hash = new URLSearchParams(currentUrl.hash.replace(/^#/, ""));
+    const callbackError = currentUrl.searchParams.get("error_description")
+      || hash.get("error_description")
+      || currentUrl.searchParams.get("error")
+      || hash.get("error");
+    const authCode = currentUrl.searchParams.get("code");
+
+    const clearAuthCallback = () => {
+      ["code", "error", "error_code", "error_description"].forEach((key) => {
+        currentUrl.searchParams.delete(key);
+      });
+      currentUrl.hash = "";
+      window.history.replaceState({}, document.title, `${currentUrl.pathname}${currentUrl.search}`);
+    };
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
+      authEventReceived = true;
+      if (active) setSession(next);
+    });
+
+    const initializeAuth = async () => {
+      if (callbackError) {
+        clearAuthCallback();
+        if (active) {
+          window.alert(`Google 로그인에 실패했습니다: ${callbackError}`);
+          setSession(null);
+        }
+        return;
+      }
+
+      const result = authCode
+        ? await supabase.auth.exchangeCodeForSession(authCode)
+        : await supabase.auth.getSession();
+      if (authCode) clearAuthCallback();
+      if (!active) return;
+      if (result.error) {
+        window.alert(`로그인 세션을 확인하지 못했습니다: ${result.error.message}`);
+        setSession(null);
+        return;
+      }
+      if (!authEventReceived) setSession(result.data.session);
+    };
+
+    initializeAuth();
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   if (previewSession) return <Dashboard session={previewSession} />;
