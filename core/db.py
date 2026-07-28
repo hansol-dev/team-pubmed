@@ -224,6 +224,7 @@ def search_papers(
         no_case = "" if uses_postgres(DATABASE_URL) else " COLLATE NOCASE"
         conditions.append(
             "("
+            f"p.pmid {insensitive_like} ?{no_case} OR "
             f"p.title {insensitive_like} ?{no_case} OR "
             f"p.abstract {insensitive_like} ?{no_case} OR "
             "EXISTS ("
@@ -235,7 +236,7 @@ def search_papers(
             ")"
         )
         pattern = f"%{keyword}%"
-        params.extend((pattern, pattern, pattern))
+        params.extend((pattern, pattern, pattern, pattern))
     if year_from is not None:
         conditions.append("p.pub_year >= ?")
         params.append(year_from)

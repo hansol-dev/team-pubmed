@@ -62,6 +62,20 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(db.search_papers(self.USER, keyword="unrelated"), [])
 
+    def test_search_finds_a_collected_paper_by_pmid(self):
+        db.upsert_papers(
+            self.USER,
+            [self.paper("12345678", "A paper title", "Journal A", 2023)],
+        )
+
+        self.assertEqual(
+            [
+                paper["pmid"]
+                for paper in db.search_papers(self.USER, keyword="12345678")
+            ],
+            ["12345678"],
+        )
+
     def test_duplicate_paper_keeps_every_collection_keyword(self):
         paper = self.paper("1", "Shared paper", "Journal A", 2023)
         db.upsert_papers(self.USER, [paper], collection_keyword="diabetes")

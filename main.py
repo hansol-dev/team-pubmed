@@ -288,14 +288,6 @@ async def chat_stream(
 
         return StreamingResponse(blocked_events(), media_type="text/event-stream")
 
-    _analysis, db, _pubmed = _core_modules()
-    papers = await asyncio.to_thread(
-        db.search_papers,
-        user_id,
-        keyword=payload.message,
-        limit=5,
-    )
-
     async def events() -> AsyncIterator[str]:
         # AIDEV-NOTE: Lazy import keeps LangChain/OpenAI out of the deployment health-check cold start.
         chatbot = await asyncio.to_thread(
@@ -305,7 +297,6 @@ async def chat_stream(
 
         async for chunk in chatbot.stream_answer(
             payload.message,
-            papers,
             conversation_id,
             user_id,
         ):
