@@ -8,7 +8,7 @@ function integer(name, fallback) {
 
 export const config = {
   env: process.env.NODE_ENV || "development",
-  port: integer("PORT", 3000),
+  port: integer("PORT", 4000),
   clientOrigin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
   databaseUrl: process.env.DATABASE_URL || "",
   databaseSsl: (process.env.DATABASE_SSL || "true").toLowerCase() !== "false",

@@ -67,7 +67,7 @@ copy server\.env.example server\.env
 `client/.env`:
 
 ```dotenv
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=http://localhost:4000
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
@@ -75,7 +75,7 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 `server/.env`:
 
 ```dotenv
-PORT=3000
+PORT=4000
 CLIENT_ORIGIN=http://localhost:5173
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
@@ -98,7 +98,7 @@ npm run dev
 ```
 
 - Frontend: <http://localhost:5173>
-- API health: <http://localhost:3000/api/health>
+- API health: <http://localhost:4000/api/health>
 
 ## 검증
 
