@@ -156,6 +156,14 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     res.json({ savedPmids, savedCount: savedPmids.length });
   }));
 
+  app.delete("/api/collection", asyncRoute(async (req, res) => {
+    const result = await query(
+      "DELETE FROM user_paper_collections WHERE user_id=$1 RETURNING pmid",
+      [req.user.id]
+    );
+    res.json({ removedCount: result.rowCount });
+  }));
+
   app.delete("/api/collection/:pmid", asyncRoute(async (req, res) => {
     const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
     const result = await query(

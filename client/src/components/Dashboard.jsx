@@ -146,6 +146,24 @@ export default function Dashboard({ session, preview = false }) {
     }
   };
 
+  const resetCollection = async () => {
+    if (preview) return;
+    const confirmed = window.confirm(
+      "현재 계정에 수집된 논문을 모두 삭제할까요?\n연결된 논문 채팅방의 논문 선택도 함께 해제되며, 이 작업은 되돌릴 수 없습니다.",
+    );
+    if (!confirmed) return;
+    setStatus("수집 데이터를 초기화하고 있어요…");
+    try {
+      const result = await call("/api/collection", { method: "DELETE" });
+      setSelected([]);
+      setCollectionStats({ added: "—", skipped: "—" });
+      await Promise.allSettled([loadOverview(), loadPapers(), loadConversations()]);
+      setStatus(`${Number(result.removedCount ?? 0).toLocaleString()}건의 수집 데이터를 초기화했습니다.`);
+    } catch (requestError) {
+      setStatus(requestError.message);
+    }
+  };
+
   const search = async (event) => {
     event.preventDefault();
     const params = new URLSearchParams();
@@ -227,7 +245,7 @@ export default function Dashboard({ session, preview = false }) {
 
   return (
     <main className={`app-shell ${mobileSheet ? "collect-sheet-open" : ""}`}>
-      <Sidebar onCollect={collect} status={status} onClose={() => setMobileSheet(false)} />
+      <Sidebar onCollect={collect} onReset={resetCollection} status={status} onClose={() => setMobileSheet(false)} />
       <button className={`mobile-collect-trigger ${tab !== "overview" ? "is-hidden" : ""}`} type="button" onClick={() => setMobileSheet(true)}><span>＋</span> 논문 수집</button>
       <button className="mobile-sheet-backdrop" type="button" aria-label="논문 수집 창 닫기" onClick={() => setMobileSheet(false)} />
       <section className="content">
@@ -248,7 +266,7 @@ export default function Dashboard({ session, preview = false }) {
   );
 }
 
-function Sidebar({ onCollect, status, onClose }) {
+function Sidebar({ onCollect, onReset, status, onClose }) {
   return (
     <aside className="sidebar clay-card">
       <a className="brand" href="/" aria-label="Publium 홈"><span>✦</span> Publium</a>
@@ -262,6 +280,7 @@ function Sidebar({ onCollect, status, onClose }) {
         </div>
         <label htmlFor="collect-max">최대 수집 건수</label><input id="collect-max" name="maxResults" type="number" min="1" max="100" defaultValue="50" required />
         <button className="primary-button collect-action" type="submit"><span>＋</span> 논문 수집하기</button>
+        <button className="reset-button collection-reset-button" type="button" onClick={onReset}>수집 데이터 초기화</button>
         <p className="form-status" role="status">{status}</p>
       </form>
       <div className="sidebar-note"><span>✦</span> PubMed 논문 기반 탐색 도구입니다.</div>
