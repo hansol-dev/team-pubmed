@@ -4,7 +4,8 @@ import Landing from "./components/Landing";
 import Dashboard from "./components/Dashboard";
 
 export default function App() {
-  const previewSession = import.meta.env.DEV && new URLSearchParams(window.location.search).get("preview") === "1"
+  const isPreview = new URLSearchParams(window.location.search).get("preview") === "1";
+  const previewSession = isPreview
     ? {
         access_token: "development-preview-token",
         user: {
@@ -73,7 +74,7 @@ export default function App() {
     };
   }, []);
 
-  if (previewSession) return <Dashboard session={previewSession} />;
+  if (previewSession) return <Dashboard session={previewSession} preview />;
   if (session === undefined) {
     return <div className="auth-loading"><span className="loading-spinner" /><p>Publium을 불러오는 중입니다.</p></div>;
   }

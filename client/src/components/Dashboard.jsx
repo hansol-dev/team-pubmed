@@ -6,6 +6,29 @@ import { supabase } from "../lib/supabase";
 
 const INTRO = "선택한 논문을 바탕으로 무엇이 궁금한가요?";
 const emptyOverview = { totalPapers: 0, totalJournals: 0, topJournals: [], papersByYear: {} };
+const previewOverview = {
+  totalPapers: 2410,
+  totalJournals: 47,
+  topJournals: [
+    ["Nature Medicine", 242],
+    ["JAMA Network Open", 188],
+    ["The Lancet", 156],
+    ["Obesity Reviews", 134],
+    ["International Journal of Obesity", 119],
+    ["Diabetes, Obesity and Metabolism", 104],
+    ["Nutrients", 96],
+    ["Frontiers in Endocrinology", 84],
+    ["BMC Medicine", 72],
+  ],
+  papersByYear: {
+    2020: 238,
+    2021: 342,
+    2022: 451,
+    2023: 548,
+    2024: 397,
+    2025: 501,
+  },
+};
 
 const normalizePaper = (paper) => ({
   ...paper,
@@ -30,15 +53,15 @@ function normalizeOverview(body = {}) {
   };
 }
 
-export default function Dashboard({ session }) {
+export default function Dashboard({ session, preview = false }) {
   const token = session.access_token;
   const user = session.user;
   const [tab, setTab] = useState("overview");
   const [loading, setLoading] = useState(0);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
-  const [overview, setOverview] = useState(emptyOverview);
-  const [collectionStats, setCollectionStats] = useState({ added: "—", skipped: "—" });
+  const [overview, setOverview] = useState(preview ? previewOverview : emptyOverview);
+  const [collectionStats, setCollectionStats] = useState(preview ? { added: 186, skipped: 32 } : { added: "—", skipped: "—" });
   const [papers, setPapers] = useState([]);
   const [paperTotal, setPaperTotal] = useState(0);
   const [selected, setSelected] = useState([]);
@@ -78,8 +101,16 @@ export default function Dashboard({ session }) {
   }, [call]);
 
   useEffect(() => {
+    if (preview) return undefined;
     Promise.allSettled([loadOverview(), loadPapers(), loadConversations()]);
-  }, [loadOverview, loadPapers, loadConversations]);
+    return undefined;
+  }, [loadOverview, loadPapers, loadConversations, preview]);
+
+  useEffect(() => {
+    if (!preview) return undefined;
+    document.body.classList.add("landing-preview");
+    return () => document.body.classList.remove("landing-preview");
+  }, [preview]);
 
   const selectTab = (next) => {
     setTab(next);

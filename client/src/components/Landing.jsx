@@ -39,8 +39,7 @@ export default function Landing({ supabaseReady }) {
 
     const preview = doc.querySelector(".live-app-showcase__frame iframe");
     if (preview) {
-      preview.removeAttribute("src");
-      preview.srcdoc = `<!doctype html><html><head><style>*{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;background:#f5f2ff}body{display:flex;align-items:flex-start;justify-content:center;overflow:hidden}img{display:block;width:100%;height:100%;object-fit:cover;object-position:top center}</style></head><body><img src="/publium-dashboard.png" alt="Publium 서비스 화면 미리보기"></body></html>`;
+      preview.src = "/?preview=1";
     }
 
     const resize = () => {

@@ -59,7 +59,7 @@
         .live-app-showcase__heading { margin-bottom: 44px; text-align: center; }
         .live-app-showcase__heading h2 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 44px); letter-spacing: -0.06em; }
         .live-app-showcase__heading p { margin: 0; color: #737086; }
-        .live-app-showcase__frame { overflow: hidden; height: 735px; border: 1px solid #e6e3ef; border-radius: 30px; background: #f7f4ff; box-shadow: 0 26px 60px -38px rgba(72, 58, 128, .38); }
+        .live-app-showcase__frame { overflow: hidden; height: 900px; border: 1px solid #e6e3ef; border-radius: 30px; background: #f7f4ff; box-shadow: 0 26px 60px -38px rgba(72, 58, 128, .38); }
         .live-app-showcase__frame iframe { display: block; width: 100%; height: 100%; border: 0; pointer-events: none; }
         .pub-app-showcase__inner { max-width: 1120px; margin: 0 auto; }
         .pub-app-showcase__heading { margin-bottom: 44px; text-align: center; }
@@ -96,7 +96,7 @@
         .pub-app__papers { margin-top: 13px; padding: 15px; border: 1px solid #ece9f2; border-radius: 15px; background: #fff; }
         .pub-app__paper { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f0eef4; }.pub-app__paper:last-child { border: 0; }.pub-app__paper-icon { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 9px; background: #eeeaff; color: #7768dc; }.pub-app__paper div { min-width: 0; flex: 1; }.pub-app__paper b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3e394a; font-size: 11px; }.pub-app__paper small { color: #938d9d; font-size: 9px; }
         .pub-app__ai { margin-top: 13px; padding: 15px; border-radius: 15px; background: linear-gradient(135deg, #7464d9, #aa9cf0); color: #fff; }.pub-app__ai p { margin: 0 0 8px; font-size: 11px; font-weight: 800; }.pub-app__ai div { padding: 10px; border-radius: 10px; background: #ffffff; color: #56506c; font-size: 10px; line-height: 1.55; }
-        @media (max-width: 760px) { .live-app-showcase { padding: 70px 16px; }.live-app-showcase__frame { height: 620px; border-radius: 22px; }.pub-app__body { grid-template-columns: 1fr; }.pub-app__sidebar { display: none; }.pub-app__main { padding: 17px; }.pub-app__metrics { grid-template-columns: 1fr 1fr; }.pub-app__grid { grid-template-columns: 1fr; }.pub-app__metric:last-child { display: none; }.pub-app__tabs { overflow: hidden; }.pub-app__tabs span { padding: 9px 8px; font-size: 10px; white-space: nowrap; } }
+        @media (max-width: 760px) { .live-app-showcase { padding: 70px 16px; }.live-app-showcase__frame { height: 1280px; border-radius: 22px; }.pub-app__body { grid-template-columns: 1fr; }.pub-app__sidebar { display: none; }.pub-app__main { padding: 17px; }.pub-app__metrics { grid-template-columns: 1fr 1fr; }.pub-app__grid { grid-template-columns: 1fr; }.pub-app__metric:last-child { display: none; }.pub-app__tabs { overflow: hidden; }.pub-app__tabs span { padding: 9px 8px; font-size: 10px; white-space: nowrap; } }
         /* Landing only: keep the first mobile view compact without changing the app UI. */
         @media (max-width: 480px) {
             nav > div { height: 64px !important; padding-right: 20px !important; padding-left: 20px !important; }
@@ -127,7 +127,7 @@
             .live-app-showcase__heading { margin-bottom: 24px !important; }
             .live-app-showcase__heading h2 { margin-bottom: 7px !important; font-size: 1.55rem !important; }
             .live-app-showcase__heading p { font-size: .88rem; line-height: 1.6; }
-            .live-app-showcase__frame { height: 585px !important; border-radius: 18px !important; }
+            .live-app-showcase__frame { height: 1280px !important; border-radius: 18px !important; }
             .landing-benefits { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px !important; }
             .landing-benefits > div { flex-direction: column; align-items: center; gap: 4px !important; min-width: 0; text-align: center; font-size: .66rem; line-height: 1.35; }
             .landing-benefits i { flex: 0 0 auto; font-size: 1rem !important; }
@@ -1813,7 +1813,7 @@ video {
                 <p>현재 Publium 서비스 화면을 그대로 보여드립니다.</p>
             </div>
             <div class="live-app-showcase__frame">
-                <iframe src="/landing/preview" title="Publium 서비스 화면 미리보기" loading="eager" scrolling="no" tabindex="-1"></iframe>
+                <iframe src="/?preview=1" title="Publium 서비스 화면 미리보기" loading="eager" scrolling="no" tabindex="-1"></iframe>
             </div>
         </div>
     </section>
