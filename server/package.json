@@ -1,0 +1,30 @@
+{
+  "name": "publium-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "check": "node --test",
+    "test": "node --test",
+    "db:migrate": "node src/migrate.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.53.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "fast-xml-parser": "^5.2.5",
+    "helmet": "^8.1.0",
+    "openai": "^5.10.2",
+    "pg": "^8.16.3",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "supertest": "^7.1.4"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "publium-renewal",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "dev:client": "npm run dev -w client",
+    "dev:server": "npm run dev -w server",
+    "build": "npm run build -w client",
+    "check": "npm run check -w server && npm run check -w client",
+    "test": "npm test -w server",
+    "start": "npm run start -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
