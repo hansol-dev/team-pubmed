@@ -8,7 +8,7 @@ current visual design and user-facing behavior.
 | Layer | Target |
 | --- | --- |
 | Frontend | React 19 + Vite on Vercel |
-| Backend | Node.js 20 + Express on Render |
+| Backend | Node.js 20 + Express on Vercel Functions |
 | Authentication | Supabase Google OAuth |
 | Database | Supabase PostgreSQL with RLS |
 | Paper source | NCBI PubMed E-utilities and PMC |
@@ -55,5 +55,7 @@ as outbound links only.
 
 ## Deployment boundaries
 
-The browser receives only the Supabase public URL, anon key, and Render API
-origin. Supabase service-role, NCBI, and OpenAI keys remain on Render.
+The browser receives only the Supabase public URL and anon key. The frontend
+calls `/api/...` on the same Vercel deployment. Supabase service-role, NCBI,
+OpenAI, and database credentials remain server-only Vercel environment
+variables.

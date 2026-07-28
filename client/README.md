@@ -10,10 +10,14 @@ npm install
 npm run dev
 ```
 
-`VITE_API_URL`에는 Express 서버의 origin을 입력합니다. API 요청은 이 값 뒤에 `/api/...`를 붙입니다.
+로컬에서는 Vite proxy가 Express 개발 서버로 `/api/...` 요청을 전달합니다.
+Vercel에서는 프론트엔드와 Express Function이 같은 origin을 사용하므로
+`VITE_API_URL`을 등록하지 않습니다.
 
 Supabase Google 로그인을 사용하려면 `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`를 설정하고 Supabase Auth의 redirect URL에 로컬 및 Vercel 주소를 등록해야 합니다.
 
 ## Vercel
 
-Vercel 프로젝트 Root Directory를 `client`로 지정하고 세 환경변수를 등록합니다. 빌드 결과는 `dist`에 생성되며 `vercel.json`이 SPA 경로를 `index.html`로 연결합니다.
+Vercel 프로젝트 Root Directory는 저장소 루트(`.`)로 지정합니다. 루트의
+`vercel.json`이 `client/dist` 정적 빌드와 `api/index.js` Express Function을
+함께 배포합니다.

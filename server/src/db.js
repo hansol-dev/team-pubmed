@@ -10,7 +10,10 @@ export function getPool() {
     pool = new Pool({
       connectionString: config.databaseUrl,
       ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
-      max: 10,
+      max: 3,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 10_000,
+      allowExitOnIdle: true,
     });
   }
   return pool;

@@ -9,10 +9,10 @@ AI 대화를 제공하는 연구 워크스페이스입니다.
 | 영역 | 기술 | 배포 |
 | --- | --- | --- |
 | Frontend | React 19, Vite | Vercel |
-| Backend | Node.js 20, Express | Render |
+| Backend | Node.js 20, Express | Vercel Function |
 | Auth / DB | Supabase Auth, PostgreSQL, pgvector | Supabase |
 | Research API | NCBI PubMed E-utilities, PMC | NCBI |
-| AI | OpenAI Chat Completions, Embeddings, SSE | Render API |
+| AI | OpenAI Chat Completions, Embeddings, SSE | Vercel Function |
 
 ## 주요 기능
 
@@ -112,8 +112,9 @@ npm audit --omit=dev
 
 ## 배포
 
-- Vercel Root Directory: `client`
-- Render Blueprint: `render.yaml`
+- Vercel Root Directory: repository root (`.`)
+- Vercel Production Branch: `deploy_vercel`
+- Vercel Function entry: `api/index.js`
 - Supabase schema: `supabase/schema.sql`
 
 환경변수, OAuth redirect, CORS, 배포 순서와 롤백 절차는

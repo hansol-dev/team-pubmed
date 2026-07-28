@@ -108,9 +108,27 @@ async function saveSearchRun(userId, input, papers) {
 
 export function createApp({ authMiddleware = requireUser } = {}) {
   const app = express();
+  const configuredOrigins = new Set(
+    config.clientOrigin.split(",").map((item) => item.trim()).filter(Boolean)
+  );
   app.disable("x-powered-by");
   app.use(helmet({ crossOriginResourcePolicy: false }));
-  app.use(cors({ origin: config.clientOrigin.split(",").map((item) => item.trim()), credentials: true }));
+  app.use((req, res, next) => {
+    const forwardedHost = req.headers["x-forwarded-host"]?.split(",")[0]?.trim();
+    const requestHost = forwardedHost || req.headers.host;
+    return cors({
+      credentials: true,
+      origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        try {
+          const sameOrigin = requestHost && new URL(origin).host === requestHost;
+          return callback(null, sameOrigin || configuredOrigins.has(origin));
+        } catch {
+          return callback(null, false);
+        }
+      },
+    })(req, res, next);
+  });
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/api/health", asyncRoute(async (_req, res) => {
