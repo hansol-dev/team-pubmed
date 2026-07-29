@@ -1,5 +1,9 @@
 const API_URL = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
+export function apiUrl(path) {
+  return `${API_URL}${path}`;
+}
+
 function detailMessage(detail) {
   if (typeof detail === "string" && detail) return detail;
   if (Array.isArray(detail)) return detail.map((item) => item?.msg).filter(Boolean).join(" · ");
@@ -20,7 +24,7 @@ export async function api(path, { token, headers, ...options } = {}) {
   return body;
 }
 
-export async function stream(path, { token, body, onToken, signal }) {
+export async function stream(path, { token, body, onToken, onSources, signal }) {
   const response = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: {
@@ -47,6 +51,7 @@ export async function stream(path, { token, body, onToken, signal }) {
     const events = buffer.split(/\r?\n\r?\n/);
     buffer = events.pop() || "";
     for (const event of events) {
+      const eventName = event.split(/\r?\n/).find((item) => item.startsWith("event:"))?.slice(6).trim() || "message";
       const line = event.split(/\r?\n/).find((item) => item.startsWith("data:"));
       if (!line) continue;
       const raw = line.slice(5).trim();
@@ -54,9 +59,10 @@ export async function stream(path, { token, body, onToken, signal }) {
       try {
         const data = JSON.parse(raw);
         if (data.error) throw new Error(data.error);
-        onToken(data.token ?? data.delta ?? data.content ?? "");
+        if (eventName === "sources") onSources?.(data.sources ?? []);
+        else if (eventName !== "done") onToken?.(data.token ?? data.delta ?? data.content ?? "");
       } catch (error) {
-        if (error instanceof SyntaxError) onToken(raw);
+        if (error instanceof SyntaxError) onToken?.(raw);
         else throw error;
       }
     }

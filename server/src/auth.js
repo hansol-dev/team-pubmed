@@ -29,7 +29,7 @@ export function resolveLocalDevelopmentUser(token, {
   };
 }
 
-function supabase() {
+export function supabaseAdmin() {
   if (!client) {
     if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
       throw new Error("Supabase authentication is not configured");
@@ -66,7 +66,7 @@ export async function requireUser(req, res, next) {
       };
       return next();
     }
-    const { data, error } = await supabase().auth.getUser(token);
+    const { data, error } = await supabaseAdmin().auth.getUser(token);
     if (error || !data.user) return res.status(401).json({ error: "Invalid or expired access token" });
     req.user = data.user;
     return next();
