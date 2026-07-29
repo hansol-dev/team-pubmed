@@ -11,11 +11,14 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.53.0",
+    "d3-force": "^3.0.0",
     "pdfjs-dist": "^5.7.284",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-force-graph-3d": "^1.29.1",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@babel/helpers": "^7.29.7",
