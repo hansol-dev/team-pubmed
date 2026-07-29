@@ -68,9 +68,21 @@ export async function listPapers(userId, filters = {}) {
   values.push(filters.limit || 100);
   const result = await query(
     `SELECT p.*, p.publication_year AS pub_year, up.saved_at AS collected_at,
+       CASE WHEN user_document.id IS NOT NULL OR p.rag_status='ready' THEN 'ready'
+            ELSE p.rag_status END AS document_status,
+       CASE WHEN user_document.id IS NOT NULL THEN 'user_pdf'
+            WHEN p.rag_status='ready' THEN 'pmc'
+            ELSE 'abstract' END AS document_source,
+       user_document.file_name AS uploaded_pdf_name,
+       (user_document.id IS NOT NULL) AS has_uploaded_pdf,
        CASE WHEN p.pmcid IS NOT NULL THEN 'pmc_full_text'
             WHEN p.doi IS NOT NULL THEN 'publisher_link' ELSE 'abstract_only' END AS access_level
      FROM user_paper_collections up JOIN pubmed_records p ON p.pmid = up.pmid
+     LEFT JOIN LATERAL (
+       SELECT id,file_name FROM user_paper_documents
+       WHERE user_id=up.user_id AND pmid=up.pmid AND is_current AND not is_del
+       ORDER BY created_at DESC LIMIT 1
+     ) user_document ON true
      WHERE ${where.join(" AND ")}
      ORDER BY p.publication_year DESC NULLS LAST, p.pmid DESC LIMIT $${values.length}`,
     values

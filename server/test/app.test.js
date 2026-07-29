@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import request from "supertest";
-import { createApp, fillYearRange, resetUserWorkspace } from "../src/app.js";
+import {
+  bestEvidenceQuote,
+  contextSources,
+  createApp,
+  evidenceScope,
+  fillYearRange,
+  resetUserWorkspace,
+} from "../src/app.js";
 
 const fakeAuthUserId = "11111111-1111-4111-8111-111111111111";
 const fakeAuth = (req, _res, next) => {
@@ -46,6 +53,69 @@ test("fills every year in the selected collection range", () => {
     fillYearRange(2020, 2024, { 2020: 12, 2022: 31, 2024: 7 }),
     { 2020: 12, 2021: 0, 2022: 31, 2023: 0, 2024: 7 },
   );
+});
+
+test("turns retrieved evidence into stable source references", () => {
+  const sources = contextSources([
+    { pmid: "123", section: "Results", content: "The primary outcome improved.", relevance: "0.91" },
+    { pmid: "123", section: "Results", content: "The primary outcome improved.", relevance: "0.91" },
+  ]);
+  assert.deepEqual(sources, [{
+    id: "source-1",
+    pmid: "123",
+    section: "Results",
+    excerpt: "The primary outcome improved.",
+    quote: "The primary outcome improved.",
+    chunkId: null,
+    documentId: null,
+    contentHash: null,
+    relevance: 0.91,
+  }]);
+});
+
+test("selects one exact supporting sentence instead of a broad chunk", () => {
+  const content = `${"Background context. ".repeat(100)}
+The total sample consisted of 306 participants across three groups.
+Additional discussion followed.`;
+  const quote = bestEvidenceQuote(
+    content,
+    "How many participants were included?",
+    "The study included 306 participants.",
+  );
+  assert.equal(quote, "The total sample consisted of 306 participants across three groups.");
+  const sources = contextSources([
+    {
+      pmid: "42496099",
+      section: "Procedure",
+      content: "The study was approved by the University's Ethics Committee.",
+      chunk_id: 80,
+    },
+    {
+      pmid: "42496099",
+      section: "Participants",
+      content,
+      chunk_id: 81,
+      document_id: "a09f4a89-2f39-4f4f-a87a-a87f76f13d74",
+      content_hash: "hash-v1",
+    },
+  ], {
+    question: "How many participants were included?",
+    answer: "전체 참여자는 306명이었습니다.",
+  });
+  assert.equal(sources.length, 1);
+  const [source] = sources;
+  assert.equal(source.quote, quote);
+  assert.equal(source.chunkId, 81);
+  assert.equal(source.documentId, "a09f4a89-2f39-4f4f-a87a-a87f76f13d74");
+  assert.equal(source.contentHash, "hash-v1");
+});
+
+test("describes full-text, mixed and abstract-only evidence scopes", () => {
+  assert.equal(evidenceScope({ paperCount: 2, fullTextCount: 2 }).mode, "full_text");
+  assert.equal(evidenceScope({ paper_count: 2, full_text_count: 1 }).mode, "mixed");
+  const abstract = evidenceScope({ paperCount: 2, fullTextCount: 0 });
+  assert.equal(abstract.mode, "abstract");
+  assert.match(abstract.instruction, /추측하지/);
 });
 
 test("resets chats, collected papers and search history for one user", async () => {

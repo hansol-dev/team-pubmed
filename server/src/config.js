@@ -44,6 +44,7 @@ export const config = {
   ncbiEmail: environment("NCBI_EMAIL"),
   ncbiApiKey: environment("NCBI_API_KEY"),
   ncbiTool: environment("NCBI_TOOL", "publium"),
+  unpaywallEmail: environment("UNPAYWALL_EMAIL"),
 };
 
 export function assertRuntimeConfig() {

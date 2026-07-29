@@ -2,13 +2,21 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import OpenAI from "openai";
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { z } from "zod";
 import { config } from "./config.js";
-import { requireUser } from "./auth.js";
+import { requireUser, supabaseAdmin } from "./auth.js";
 import { query, transaction } from "./db.js";
 import { BLOCKED_RESPONSE, isMedicalAdviceRequest } from "./guard.js";
 import { addToCollection, listPapers, upsertPapers } from "./papers.js";
-import { ensurePaperDocument, retrieveRoomContext } from "./pmc.js";
+import {
+  ensurePaperDocument,
+  getRoomPaperDocument,
+  persistUserPdf,
+  refreshPaperSources,
+  retrieveRoomContext,
+} from "./pmc.js";
 import { countPubMedByYear, searchPubMed } from "./pubmed.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -27,6 +35,19 @@ const roomSchema = z.object({
 const chatSchema = z.object({
   conversationId: z.string().uuid(),
   message: z.string().trim().min(1).max(4000),
+});
+const pdfUploadSchema = z.object({
+  storagePath: z.string().trim().min(1).max(600),
+  fileName: z.string().trim().min(1).max(255),
+  sizeBytes: z.coerce.number().int().min(1).max(25 * 1024 * 1024),
+  pageCount: z.coerce.number().int().min(1).max(2000),
+  sections: z.array(z.object({
+    section: z.string().trim().min(1).max(120),
+    text: z.string().trim().min(1).max(300_000),
+  })).min(1).max(2000),
+}).superRefine((value, ctx) => {
+  const total = value.sections.reduce((sum, item) => sum + item.text.length, 0);
+  if (total > 3_500_000) ctx.addIssue({ code: "custom", message: "Extracted PDF text is too large" });
 });
 
 export function fillYearRange(yearFrom, yearTo, counts = {}) {
@@ -86,6 +107,91 @@ function csvCell(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+function evidenceWords(value) {
+  return new Set(
+    String(value || "").toLowerCase()
+      .match(/\p{L}[\p{L}\p{N}'-]{2,}|\p{N}+/gu) || [],
+  );
+}
+
+export function bestEvidenceQuote(content, question = "", answer = "") {
+  const candidates = String(content || "")
+    .split(/\n+|(?<=[.!?])\s+/)
+    .map((item) => item.replace(/^(제목|저널|발행 연도|초록):\s*/i, "").trim())
+    .filter((item) => item.length >= 30);
+  if (!candidates.length) return String(content || "").trim().slice(0, 280);
+  const target = evidenceWords(`${question} ${answer}`);
+  let best = candidates[0];
+  let bestScore = -1;
+  for (const candidate of candidates) {
+    const words = evidenceWords(candidate);
+    const overlap = [...words].filter((word) => target.has(word)).length;
+    const score = overlap / Math.max(1, Math.sqrt(words.size));
+    if (score > bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best.slice(0, 500);
+}
+
+export function contextSources(context = [], { question = "", answer = "" } = {}) {
+  const seen = new Set();
+  const sources = [];
+  for (const item of context) {
+    const quote = bestEvidenceQuote(item.content, question, answer);
+    if (!item.pmid || !quote) continue;
+    const key = `${item.pmid}:${item.section || "본문"}:${quote}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({
+      id: `source-${sources.length + 1}`,
+      pmid: String(item.pmid),
+      section: item.section || "본문",
+      excerpt: quote,
+      quote,
+      chunkId: item.chunk_id || null,
+      documentId: item.document_id || null,
+      contentHash: item.content_hash || null,
+      relevance: Number.isFinite(Number(item.relevance)) ? Number(item.relevance) : null,
+      _answerOverlap: [...evidenceWords(quote)].filter((word) =>
+        evidenceWords(`${question} ${answer}`).has(word)).length,
+    });
+  }
+  const ranked = question || answer
+    ? [...sources].sort((left, right) =>
+        right._answerOverlap - left._answerOverlap
+        || (right.relevance ?? -1) - (left.relevance ?? -1))
+    : sources;
+  const relevant = ranked.filter((item) => item._answerOverlap > 0);
+  return (relevant.length ? relevant : ranked).slice(0, question || answer ? 5 : ranked.length)
+    .map(({ _answerOverlap, ...source }) => source);
+}
+
+export function evidenceScope(summary = {}) {
+  const total = Number(summary.paperCount ?? summary.paper_count ?? 0) || 0;
+  const full = Number(summary.fullTextCount ?? summary.full_text_count ?? 0) || 0;
+  if (!total) {
+    return { mode: "none", instruction: "현재 선택된 논문이 없습니다." };
+  }
+  if (full === total) {
+    return {
+      mode: "full_text",
+      instruction: "선택된 모든 논문에 접근 가능한 전문 근거가 있습니다. 제공된 전문 근거와 초록 안에서만 답하세요.",
+    };
+  }
+  if (full > 0) {
+    return {
+      mode: "mixed",
+      instruction: `선택 논문 ${total}편 중 ${full}편만 접근 가능한 전문이 있고 나머지는 초록만 있습니다. 초록만 있는 논문의 세부 방법, 표, 추가 통계, 세부 결과를 추측하지 말고 확인할 수 없다고 명시하세요.`,
+    };
+  }
+  return {
+    mode: "abstract",
+    instruction: "선택된 모든 논문은 제목과 초록만 제공됩니다. 초록에 직접 적힌 내용만 설명하고, 세부 방법, 표, 추가 통계, 세부 결과, 본문 한계를 추측하지 말며 전문 확인이 필요하다고 명시하세요.",
+  };
+}
+
 async function roomForUser(userId, roomId) {
   const result = await query(
     "SELECT * FROM chat_rooms WHERE id=$1 AND user_id=$2 AND is_del=false",
@@ -96,7 +202,7 @@ async function roomForUser(userId, roomId) {
 
 async function messagesForRoom(userId, roomId, limit = 200) {
   const result = await query(
-    `SELECT m.id, m.role, m.content, m.created_at
+    `SELECT m.id, m.role, m.content, m.citations, m.created_at
      FROM chat_messages m JOIN chat_rooms r ON r.id=m.chat_room_id
      WHERE m.chat_room_id=$1 AND r.user_id=$2
        AND m.is_del=false AND r.is_del=false
@@ -106,12 +212,12 @@ async function messagesForRoom(userId, roomId, limit = 200) {
   return result.rows.reverse();
 }
 
-async function saveMessage(userId, roomId, role, content) {
+async function saveMessage(userId, roomId, role, content, citations = []) {
   const result = await query(
-    `INSERT INTO chat_messages (chat_room_id,user_id,role,content)
-     SELECT id,$2,$3,$4 FROM chat_rooms
+    `INSERT INTO chat_messages (chat_room_id,user_id,role,content,citations)
+     SELECT id,$2,$3,$4,$5::jsonb FROM chat_rooms
      WHERE id=$1 AND user_id=$2 AND is_del=false RETURNING *`,
-    [roomId, userId, role, content]
+    [roomId, userId, role, content, JSON.stringify(citations)]
   );
   if (!result.rowCount) {
     const error = new Error("Conversation not found");
@@ -181,7 +287,7 @@ export function createApp({ authMiddleware = requireUser } = {}) {
       },
     })(req, res, next);
   });
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "8mb" }));
 
   app.get("/api/health", asyncRoute(async (_req, res) => {
     await query("SELECT 1");
@@ -302,8 +408,18 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 
   app.get("/api/chat/conversations", asyncRoute(async (req, res) => {
     const result = await query(
-      `SELECT r.id,r.title,r.created_at,r.updated_at,count(rp.pmid)::int AS paper_count
-       FROM chat_rooms r LEFT JOIN chat_room_papers rp ON rp.chat_room_id=r.id
+      `SELECT r.id,r.title,r.created_at,r.updated_at,
+              count(rp.pmid)::int AS paper_count,
+              count(rp.pmid) FILTER (
+                WHERE p.rag_status='ready' OR EXISTS (
+                  SELECT 1 FROM user_paper_documents upd
+                  WHERE upd.user_id=r.user_id AND upd.pmid=rp.pmid
+                    AND upd.is_current AND not upd.is_del
+                )
+              )::int AS full_text_count
+       FROM chat_rooms r
+       LEFT JOIN chat_room_papers rp ON rp.chat_room_id=r.id
+       LEFT JOIN pubmed_records p ON p.pmid=rp.pmid
        WHERE r.user_id=$1 AND r.is_del=false
        GROUP BY r.id ORDER BY r.updated_at DESC`,
       [req.user.id]
@@ -338,7 +454,16 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     });
     const papers = [];
     for (const item of owned.rows) {
-      papers.push({ ...item, documentStatus: await ensurePaperDocument(item.pmid) });
+      const uploaded = await query(
+        `SELECT 1 FROM user_paper_documents
+         WHERE user_id=$1 AND pmid=$2 AND is_current AND not is_del`,
+        [req.user.id, item.pmid],
+      );
+      papers.push({
+        ...item,
+        documentStatus: uploaded.rowCount ? "ready" : await ensurePaperDocument(item.pmid),
+        documentSource: uploaded.rowCount ? "user_pdf" : undefined,
+      });
     }
     res.status(201).json({ conversation: room, papers });
   }));
@@ -347,12 +472,132 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     const room = await roomForUser(req.user.id, req.params.id);
     if (!room) return res.status(404).json({ error: "Conversation not found" });
     const papers = await query(
-      `SELECT p.*,p.publication_year AS pub_year,p.rag_status AS document_status
+      `SELECT p.*,p.publication_year AS pub_year,
+              CASE WHEN uploaded.id IS NOT NULL OR p.rag_status='ready' THEN 'ready'
+                   ELSE p.rag_status END AS document_status,
+              CASE WHEN uploaded.id IS NOT NULL THEN 'user_pdf'
+                   WHEN p.rag_status='ready' THEN 'pmc'
+                   ELSE 'abstract' END AS document_source,
+              uploaded.file_name AS uploaded_pdf_name,
+              (uploaded.id IS NOT NULL) AS has_uploaded_pdf
        FROM chat_room_papers rp JOIN pubmed_records p ON p.pmid=rp.pmid
+       LEFT JOIN LATERAL (
+         SELECT id,file_name FROM user_paper_documents
+         WHERE user_id=rp.user_id AND pmid=rp.pmid AND is_current AND not is_del
+         ORDER BY created_at DESC LIMIT 1
+       ) uploaded ON true
        WHERE rp.chat_room_id=$1 ORDER BY rp.position`,
       [room.id]
     );
     res.json({ conversation: room, papers: papers.rows });
+  }));
+
+  app.get("/api/papers/:pmid/sources", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const owned = await query(
+      "SELECT 1 FROM user_paper_collections WHERE user_id=$1 AND pmid=$2 AND not is_del",
+      [req.user.id, pmid],
+    );
+    if (!owned.rowCount) return res.status(404).json({ error: "Paper not found in your collection" });
+    const result = await query(
+      `SELECT provider,format,source_url,landing_url,license,version,
+              is_open_access,is_reusable,discovered_at
+       FROM paper_source_candidates
+       WHERE pmid=$1 AND not is_del
+       ORDER BY CASE provider WHEN 'pmc' THEN 1 WHEN 'bioc' THEN 2
+                              WHEN 'unpaywall' THEN 3 ELSE 4 END,
+                CASE format WHEN 'pdf' THEN 1 WHEN 'jats' THEN 2 ELSE 3 END`,
+      [pmid],
+    );
+    res.json({ pmid, sources: result.rows });
+  }));
+
+  app.post("/api/papers/:pmid/sources/discover", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const owned = await query(
+      "SELECT 1 FROM user_paper_collections WHERE user_id=$1 AND pmid=$2 AND not is_del",
+      [req.user.id, pmid],
+    );
+    if (!owned.rowCount) return res.status(404).json({ error: "Paper not found in your collection" });
+    const discovery = await refreshPaperSources(pmid);
+    res.json({ pmid, ...discovery });
+  }));
+
+  app.post("/api/papers/:pmid/pdf", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const input = parse(pdfUploadSchema, req.body);
+    const expectedPrefix = `${req.user.id}/${pmid}/`;
+    if (!input.storagePath.startsWith(expectedPrefix) || !input.storagePath.toLowerCase().endsWith(".pdf")) {
+      return res.status(400).json({ error: "Invalid PDF storage path" });
+    }
+    const result = await persistUserPdf(req.user.id, pmid, input);
+    if (!result) return res.status(404).json({ error: "Paper not found in your collection" });
+    res.status(201).json(result);
+  }));
+
+  app.post("/api/papers/:pmid/pdf/upload-url", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const input = parse(z.object({
+      fileName: z.string().trim().min(1).max(255).refine((value) => /\.pdf$/i.test(value)),
+      sizeBytes: z.coerce.number().int().min(1).max(25 * 1024 * 1024),
+    }), req.body);
+    const owned = await query(
+      "SELECT 1 FROM user_paper_collections WHERE user_id=$1 AND pmid=$2 AND not is_del",
+      [req.user.id, pmid],
+    );
+    if (!owned.rowCount) return res.status(404).json({ error: "Paper not found in your collection" });
+    const path = `${req.user.id}/${pmid}/${randomUUID()}.pdf`;
+    const { data, error } = await supabaseAdmin().storage
+      .from("paper-pdfs")
+      .createSignedUploadUrl(path);
+    if (error) throw error;
+    res.json({ path: data.path, token: data.token, maxBytes: 25 * 1024 * 1024 });
+  }));
+
+  app.get("/api/chat/conversations/:id/papers/:pmid/document", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const documentId = req.query.documentId
+      ? parse(z.string().uuid(), req.query.documentId)
+      : null;
+    const reader = await getRoomPaperDocument(req.user.id, req.params.id, pmid, documentId);
+    if (!reader) return res.status(404).json({ error: "Paper not found in this conversation" });
+    if (reader.paper?.pdfUrl) {
+      const queryString = documentId ? `?documentId=${encodeURIComponent(documentId)}` : "";
+      reader.paper.externalPdfUrl = reader.paper.pdfUrl;
+      reader.paper.pdfUrl = `/api/chat/conversations/${encodeURIComponent(req.params.id)}/papers/${encodeURIComponent(pmid)}/pdf${queryString}`;
+    }
+    res.json(reader);
+  }));
+
+  app.get("/api/chat/conversations/:id/papers/:pmid/pdf", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const documentId = req.query.documentId
+      ? parse(z.string().uuid(), req.query.documentId)
+      : null;
+    const reader = await getRoomPaperDocument(req.user.id, req.params.id, pmid, documentId);
+    const pdfUrl = reader?.paper?.pdfUrl;
+    if (!pdfUrl) return res.status(404).json({ error: "PDF is not available" });
+    const parsedUrl = new URL(pdfUrl);
+    const allowedHost = parsedUrl.hostname === "pmc-oa-opendata.s3.amazonaws.com"
+      || parsedUrl.hostname === "ftp.ncbi.nlm.nih.gov"
+      || parsedUrl.hostname.endsWith(".supabase.co");
+    if (!allowedHost) return res.status(422).json({ error: "This PDF can only be opened on the external provider" });
+    const upstream = await fetch(pdfUrl, {
+      headers: req.headers.range ? { Range: req.headers.range } : {},
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!upstream.ok && upstream.status !== 206) {
+      return res.status(502).json({ error: `PDF provider request failed (${upstream.status})` });
+    }
+    res.status(upstream.status === 206 ? 206 : 200);
+    res.setHeader("content-type", "application/pdf");
+    res.setHeader("content-disposition", "inline");
+    for (const header of ["accept-ranges", "content-length", "content-range", "etag", "last-modified"]) {
+      const value = upstream.headers.get(header);
+      if (value) res.setHeader(header, value);
+    }
+    if (!upstream.body) return res.end();
+    Readable.fromWeb(upstream.body).pipe(res);
   }));
 
   app.delete("/api/chat/conversations/:id", asyncRoute(async (req, res) => {
@@ -393,7 +638,9 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     res.setHeader("cache-control", "no-cache, no-transform");
     res.setHeader("connection", "keep-alive");
     res.flushHeaders();
-    const emit = (token) => res.write(`data: ${JSON.stringify({ token })}\n\n`);
+    const emitEvent = (event, data) =>
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const emit = (token) => emitEvent("token", { token });
 
     if (isMedicalAdviceRequest(input.message)) {
       emit(BLOCKED_RESPONSE);
@@ -409,16 +656,34 @@ export function createApp({ authMiddleware = requireUser } = {}) {
       return res.end();
     }
 
-    const [context, history] = await Promise.all([
+    const [context, history, scopeResult] = await Promise.all([
       retrieveRoomContext(req.user.id, input.conversationId, input.message),
       messagesForRoom(req.user.id, input.conversationId, 30),
+      query(
+        `SELECT count(rp.pmid)::int AS paper_count,
+                count(rp.pmid) FILTER (
+                  WHERE p.rag_status='ready' OR EXISTS (
+                    SELECT 1 FROM user_paper_documents upd
+                    WHERE upd.user_id=rp.user_id AND upd.pmid=rp.pmid
+                      AND upd.is_current AND not upd.is_del
+                  )
+                )::int AS full_text_count
+         FROM chat_room_papers rp
+         JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id AND r.is_del=false
+         JOIN pubmed_records p ON p.pmid=rp.pmid
+         WHERE rp.chat_room_id=$1 AND rp.user_id=$2`,
+        [input.conversationId, req.user.id],
+      ),
     ]);
+    const scope = evidenceScope(scopeResult.rows[0]);
     const evidence = context.map((item, index) =>
       `[근거 ${index + 1}] PMID ${item.pmid} / ${item.section}\n${item.content}`
     ).join("\n\n");
     const system = evidence
       ? `당신은 선택된 PubMed 논문을 분석하는 연구 보조자입니다.
 제공된 근거 밖의 내용을 사실처럼 만들지 말고, 근거가 부족하면 명확히 말하세요.
+근거 범위: ${scope.instruction}
+이전 어시스턴트 답변은 논문 근거가 아닙니다. 이전 답변과 아래 근거가 충돌하면 반드시 아래 근거를 따르세요.
 선택된 논문이 여러 편이면 모든 논문을 빠짐없이 고려하고, 공통점·차이점·상충하는 결과를 종합하세요.
 개별 논문의 결과와 종합 해석을 구분하세요.
 사용자가 명시적으로 요청하지 않는 한 답변 본문에 PMID 번호, 내부 근거 번호, 원시 식별자를 표시하지 마세요.
@@ -470,7 +735,9 @@ ${evidence}`
           emit(token);
         }
       }
-      if (answer) await saveMessage(req.user.id, input.conversationId, "assistant", answer);
+      const sources = contextSources(context, { question: input.message, answer });
+      if (sources.length) emitEvent("sources", { sources });
+      if (answer) await saveMessage(req.user.id, input.conversationId, "assistant", answer, sources);
       res.write("event: done\ndata: {}\n\n");
       res.end();
     } catch (error) {

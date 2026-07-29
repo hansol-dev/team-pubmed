@@ -84,6 +84,7 @@ DATABASE_SSL=true
 OPENAI_API_KEY=your-openai-key
 NCBI_EMAIL=your-email
 NCBI_API_KEY=your-optional-ncbi-key
+UNPAYWALL_EMAIL=your-email
 DEV_USER_ID=your-existing-supabase-user-uuid
 ```
 
