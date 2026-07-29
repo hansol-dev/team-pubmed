@@ -1,127 +1,271 @@
 # Publium
 
-PubMed 논문을 검색·수집하고, 선택한 논문의 초록이나 공개 전문을 근거로
-AI와 대화하는 연구 워크스페이스입니다. 기존 Publium 디자인은 유지하면서
-React, Express, Supabase, Vercel 구조로 리뉴얼했습니다.
+> **PubMed 논문을 찾고, 모으고, 읽고, 근거를 확인하며 AI와 대화하는 연구 워크스페이스**
 
-## 기술 구성
+[서비스 바로가기](https://team-pubmed.vercel.app/) ·
+[배포 가이드](docs/deployment-renewal.md) ·
+[리뉴얼 아키텍처](docs/renewal-architecture.md)
+
+Publium은 여러 사이트와 PDF를 오가며 논문을 정리해야 하는 번거로움을
+줄이기 위해 만든 서비스입니다. PubMed 논문 검색부터 초록·공개 전문 수집,
+논문별 채팅방, 여러 논문 종합 분석까지 한 화면에서 처리합니다.
+
+AI가 알고 있는 일반 지식에만 의존하지 않습니다. 선택한 논문의 초록이나
+전문에서 관련 근거를 찾아 답변하는 **논문 기반 RAG 챗봇**입니다.
+
+![Publium 개요 화면](docs/images/readme-overview.png)
+
+## 어떤 사람에게 필요한가요?
+
+- 관심 주제의 최신 PubMed 논문을 빠르게 모으고 싶은 연구자
+- 여러 논문의 연구 목적·방법·결과를 비교하고 싶은 학생
+- 긴 논문에서 질문과 관련된 문단을 바로 찾고 싶은 사용자
+- 답변만 보는 것이 아니라 실제 근거 문장까지 확인하고 싶은 사용자
+
+Publium은 논문 탐색과 연구 보조 도구입니다. 개인의 증상을 진단하거나
+약물·복용법을 안내하는 의료 조언 서비스가 아닙니다.
+
+## 무엇을 할 수 있나요?
+
+| 기능 | 설명 |
+| --- | --- |
+| PubMed 검색·수집 | 키워드, 시작·종료 연도, 최대 건수를 지정해 논문을 수집합니다. |
+| 초록 자동 저장 | 검색한 논문의 제목, 저자, 저널, 초록, DOI, PMCID를 DB에 저장합니다. |
+| 수집 현황 분석 | 연도별 논문 수와 많이 등장한 저널을 그래프로 확인합니다. |
+| 논문 목록 관리 | 제목·초록·검색어·연도·저널로 검색하고 전문 여부와 정렬 기준을 선택합니다. |
+| 공개 전문 탐색 | PMC OA, PMC Open Data, BioC, Unpaywall, Crossref에서 원문 후보를 찾습니다. |
+| PDF 업로드 | 자동으로 구하지 못한 논문은 사용자가 PDF를 올려 분석할 수 있습니다. |
+| 여러 논문 분석 | 최대 5편을 한 채팅방에 넣고 공통점·차이점·종합 결론을 질문합니다. |
+| Paper Reader | 논문 원문과 채팅을 50:50으로 열어 함께 읽습니다. |
+| 근거 하이라이트 | 답변에 사용된 출처 문장을 표시하고 원문 위치를 강조합니다. |
+| 스트리밍 답변 | AI 답변을 완성될 때까지 기다리지 않고 실시간으로 확인합니다. |
+| 사용자별 공간 | Google 로그인, Supabase RLS로 논문 목록과 채팅을 사용자별로 분리합니다. |
+
+## 사용 방법
+
+### 1. 관심 논문을 검색하고 수집합니다
+
+왼쪽 검색 영역에서 키워드와 연도 범위를 입력합니다. PubMed 검색 결과의
+메타데이터와 초록은 검색 시점에 저장되므로, 이후 질문할 때 PubMed에서
+같은 초록을 매번 다시 가져오지 않습니다.
+
+개요 화면에서는 다음 정보를 바로 확인할 수 있습니다.
+
+- 현재 저장된 전체 논문 수
+- 이번 검색에서 새로 들어온 논문과 중복으로 건너뛴 논문 수
+- 검색 기간 전체의 연도별 논문 분포
+- 수집 논문에서 많이 등장한 저널
+
+### 2. 논문 목록에서 분석 대상을 고릅니다
+
+논문 카드에서 초록, 저자, 저널, 출판 연도, PMID를 확인할 수 있습니다.
+PubMed·출판사 원문으로 이동하거나 PDF를 직접 업로드할 수도 있습니다.
+
+![Publium 논문 목록](docs/images/readme-paper-list.png)
+
+목록에서는 다음 조건을 조합할 수 있습니다.
+
+- 제목·초록·수집 검색어
+- 시작·종료 연도
+- 저널명
+- 전체 논문 / 전문 분석 가능 / 초록 기반
+- 최신순 / 오래된순 / 최근 수집순 / 제목순
+
+분석할 논문은 최대 5편까지 선택할 수 있습니다. 선택한 논문을 챗봇으로
+보내면 해당 논문 조합을 위한 별도의 채팅방이 생성됩니다.
+
+### 3. 선택한 논문에 대해 질문합니다
+
+챗봇은 채팅방에 연결된 논문만 근거로 답변합니다. 여러 논문을 선택했다면
+각 논문의 개요와 관련 문단을 함께 검색해 종합합니다.
+
+예를 들어 다음과 같이 질문할 수 있습니다.
+
+- 이 논문의 연구 목적과 결론을 간단히 정리해줘.
+- 연구 대상과 사용한 방법을 설명해줘.
+- 선택한 세 논문의 공통점과 차이점을 비교해줘.
+- 결과를 뒷받침하는 실제 근거 문장을 보여줘.
+- 연구의 한계와 후속 연구 아이디어를 정리해줘.
+
+![Publium 논문 기반 AI 채팅](docs/images/readme-chat.png)
+
+논문 없이 일반 채팅방을 만들 수도 있지만, 논문 근거가 필요한 질문은
+반드시 논문을 연결한 채팅방에서 진행해야 합니다.
+
+### 4. 원문과 답변을 함께 확인합니다
+
+`원문 보기`를 누르면 Paper Reader가 왼쪽, 채팅이 오른쪽에 열립니다.
+PDF와 추출 본문을 전환하면서 답변에 사용된 근거를 확인할 수 있습니다.
+
+![Publium Paper Reader와 AI 채팅](docs/images/readme-paper-reader.png)
+
+`외부 원문`은 PMC·DOI·출판사 페이지를 새 창으로 엽니다. 외부 페이지는
+서비스가 제어할 수 없으므로 Publium의 근거 하이라이트는 Paper Reader에
+저장된 본문에서 제공합니다.
+
+## 논문 전문은 어떻게 가져오나요?
+
+Publium은 권리가 확인되지 않은 유료 출판사 본문을 무단으로 크롤링하지
+않습니다. 실제 분석에 사용할 수 있는 본문을 다음 순서로 확보합니다.
+
+| 경로 | 역할 | 자동 분석 여부 |
+| --- | --- | --- |
+| PMC Open Data | 공개 JATS XML·PDF·텍스트 탐색 | 공개 라이선스 확인 후 분석 |
+| NCBI EFetch | PMCID로 PMC XML 요청 | 공개 라이선스 확인 후 분석 |
+| BioC | PMC 본문을 구조화된 JSON으로 요청 | PMC 라이선스 확인 후 분석 |
+| Unpaywall | DOI의 합법적인 공개 원문 위치 탐색 | 링크·PDF 후보 저장 |
+| Crossref | DOI·출판사 원문 후보 탐색 | 링크 후보만 저장 |
+| 사용자 PDF | 사용자가 보유한 PDF 업로드 | 사용자 전용으로 분석 |
+| PubMed 초록 | 전문을 구하지 못했을 때의 마지막 근거 | 초록 범위에서 답변 |
+
+실제 근거 우선순위는 다음과 같습니다.
+
+```text
+사용자 업로드 PDF
+  → DB에 저장된 PMC 공개 전문
+  → PMC XML
+  → BioC 본문
+  → PubMed 초록
+```
+
+중요한 차이가 있습니다.
+
+- **원문 링크 발견**: 읽을 수 있는 외부 위치를 찾은 상태
+- **전문 분석 완료**: 본문을 추출하고 청킹·임베딩하여 DB에 저장한 상태
+
+Unpaywall이나 Crossref에서 링크를 찾았다는 이유만으로 그 PDF를 자동
+다운로드하거나 임베딩하지 않습니다. PMC XML·BioC 본문 또는 사용자가
+업로드한 PDF처럼 실제 텍스트를 확보한 경우에만 전문 RAG가 준비됩니다.
+
+### PDF 업로드 제한
+
+- 파일 형식: PDF
+- 최대 크기: 25MB
+- 최대 페이지: 2,000페이지
+- 최대 추출 텍스트: 3,500,000자
+- 저장 위치: Supabase 비공개 `paper-pdfs` bucket
+- 접근 범위: 업로드한 사용자 본인
+
+현재 OCR은 지원하지 않습니다. 글자를 드래그할 수 없는 스캔 이미지 PDF는
+텍스트를 추출할 수 없어 분석 대상이 되지 않습니다.
+
+## RAG는 어떻게 동작하나요?
+
+RAG는 AI가 논문 전체를 외우게 만드는 방식이 아닙니다. 질문이 들어올 때
+DB에서 관련 문단을 찾아 AI에게 참고 자료로 전달하는 방식입니다.
+
+```text
+논문 전문 확보
+  → 섹션별 본문 정리
+  → 작은 청크로 분리
+  → 청크 임베딩 생성
+  → PostgreSQL + pgvector 저장
+
+사용자 질문
+  → 질문 임베딩 생성
+  → 의미가 가까운 논문 청크 검색
+  → 논문 개요 + 검색된 근거를 AI에 전달
+  → 스트리밍 답변
+  → 출처 문장과 하이라이트 표시
+```
+
+쉽게 말하면 논문마다 **의미 기반 색인**을 미리 만들어 두고, 질문할 때
+필요한 부분만 빠르게 펼쳐 보는 구조입니다.
+
+### 청킹과 벡터 검색 기준
+
+- 청크 크기: 최대 약 4,200자
+- 청크 중복: 약 400자
+- 임베딩 모델: `text-embedding-3-small`
+- 벡터 크기: 1,536차원
+- 벡터 저장소: Supabase PostgreSQL의 `pgvector`
+- 거리 기준: 코사인 거리
+- 검색 인덱스: HNSW
+- 기본 검색량: 논문별 최대 2개, 전체 약 10개 청크
+
+별도의 Pinecone 같은 벡터 DB를 운영하지 않습니다. PostgreSQL 안에서 일반
+데이터와 벡터를 함께 관리합니다.
+
+| 문서 종류 | 원문 테이블 | 청크·벡터 테이블 | 데이터 범위 |
+| --- | --- | --- | --- |
+| PMC 공개 전문 | `paper_documents` | `paper_chunks` | 여러 사용자가 재사용하는 공용 캐시 |
+| 사용자 PDF | `user_paper_documents` | `user_paper_chunks` | 업로드한 사용자 전용 |
+
+질문을 임베딩할 수 없거나 pgvector 검색이 실패해도 채팅 전체를 중단하지
+않습니다. 이 경우 논문별 앞쪽 청크를 순서대로 가져오는 결정적 fallback을
+사용합니다. 다만 의미 유사도 검색보다 근거 선택 정확도가 낮을 수 있습니다.
+
+전문이 없는 논문은 제목·저널·출판 연도·초록을 논문 개요로 AI에 직접
+전달합니다. 초록은 현재 전문처럼 벡터 청킹하지 않으므로, 초록에 없는
+세부 방법이나 결과까지 답할 수는 없습니다.
+
+## 전체 시스템 구조
+
+```mermaid
+flowchart LR
+    U[사용자 브라우저] --> F[React / Vite]
+    F -->|Google 로그인| A[Supabase Auth]
+    F -->|/api| B[Express Vercel Function]
+    B --> P[PubMed / PMC / BioC]
+    B --> O[Unpaywall / Crossref]
+    B --> AI[OpenAI Chat / Embeddings]
+    B --> DB[(Supabase PostgreSQL + pgvector)]
+    F --> S[Supabase 비공개 PDF Storage]
+    B --> S
+```
 
 | 영역 | 기술 | 실행 환경 |
 | --- | --- | --- |
 | Frontend | React 19, Vite | Vercel Static Build |
 | Backend | Node.js 22, Express | Vercel Function |
-| Auth / DB | Supabase Auth, PostgreSQL, pgvector | Supabase |
+| Auth | Supabase Auth, Google OAuth | Supabase |
+| Database | PostgreSQL, pgvector, RLS | Supabase |
+| PDF Storage | Supabase Storage | 비공개 bucket |
 | 논문 데이터 | PubMed E-utilities, PMC, BioC | NCBI |
 | 원문 탐색 | PMC OA, Unpaywall, Crossref | 외부 API |
 | AI | OpenAI Chat, Embeddings, SSE | Vercel Function |
-
-## 주요 기능
-
-- 키워드·연도 범위로 PubMed 논문 검색
-- 검색 즉시 제목, 저자, 저널, 초록, DOI, PMCID 저장
-- 사용자별 논문 컬렉션·검색 이력·채팅방 분리
-- 최대 5편을 선택해 여러 논문을 함께 분석
-- PMC 공개 전문 자동 수집과 사용자 PDF 업로드
-- 논문 원문과 채팅을 나란히 보는 Paper Reader
-- 답변 근거 문단 표시와 원문 하이라이트
-- SSE 기반 AI 답변 스트리밍
-- Google OAuth 로그인과 PostgreSQL RLS
-- `is_del` 기반 소프트 삭제
-
-## RAG 동작 방식
-
-Publium 챗봇은 RAG 방식입니다.
-
-```text
-논문 검색
-  → 초록 저장
-  → 공개 전문 탐색 또는 PDF 업로드
-  → 본문 청킹·임베딩·DB 저장
-  → 질문과 관련된 논문 조각 검색
-  → 검색한 근거와 질문을 AI에 전달
-  → 답변과 출처 문단 표시
-```
-
-논문 전문은 다음 순서로 사용합니다.
-
-```text
-사용자 업로드 PDF
-  → 저장된 PMC 공개 전문
-  → PMC XML
-  → BioC 본문
-  → 저장된 초록
-```
-
-- PMC 전문은 공개 라이선스를 확인한 뒤 공용 문서로 한 번만 저장합니다.
-- Unpaywall과 Crossref는 공개 원문·PDF 위치를 찾는 데 사용합니다.
-- 출판사 페이지와 권리가 확인되지 않은 PDF는 자동 수집하지 않습니다.
-- 전문을 확보하지 못한 논문은 저장된 초록만 근거로 답변합니다.
-- 업로드 PDF는 최대 25MB·2,000페이지이며 사용자 계정별로 분리됩니다.
-- 스캔 이미지 PDF는 현재 OCR을 지원하지 않습니다.
-
-### 벡터 저장과 검색
-
-별도의 Pinecone 같은 벡터 DB를 두지 않고, Supabase PostgreSQL의
-`pgvector` 확장을 벡터 저장소로 사용합니다.
-
-전문을 실제로 확보하면 다음과 같이 처리합니다.
-
-1. PMC XML·BioC 본문 또는 업로드 PDF 텍스트를 섹션별로 정리합니다.
-2. 본문을 최대 약 4,200자 단위로 나누고, 문맥이 끊기지 않도록 청크마다
-   약 400자를 겹칩니다.
-3. 각 청크를 `text-embedding-3-small`의 1,536차원 벡터로 변환합니다.
-4. 원문 청크, 섹션, 임베딩 모델과 벡터를 PostgreSQL에 저장합니다.
-
-| 문서 종류 | 원문 저장 | 청크·벡터 저장 | 범위 |
-| --- | --- | --- | --- |
-| PMC 공개 전문 | `paper_documents` | `paper_chunks` | 모든 사용자가 재사용하는 공용 캐시 |
-| 사용자 PDF | `user_paper_documents` | `user_paper_chunks` | 업로드한 사용자 전용 |
-
-질문할 때는 질문도 같은 모델로 임베딩하고, `pgvector`의 코사인 거리로
-가까운 청크를 검색합니다. 논문별로 관련 청크를 최대 2개씩 고르고, 기본
-요청에서는 전체 약 10개 이내의 근거와 각 논문의 제목·초록을 AI에
-전달합니다. HNSW 인덱스로 벡터 검색 속도를 높입니다.
-
-OpenAI 임베딩 호출이나 pgvector 검색을 사용할 수 없을 때는 요청을
-실패시키지 않고 논문별 앞쪽 청크를 순서대로 가져오는 방식으로
-대체합니다. 이 경우 의미 유사도 검색보다 근거 선택 정확도가 낮을 수
-있습니다.
-
-원문 링크 발견과 벡터 저장은 별개입니다.
-
-- PMC XML·BioC 본문 확보: 자동 청킹·임베딩
-- 사용자 PDF 업로드: 자동 청킹·임베딩
-- Unpaywall·Crossref 링크만 발견: 링크 후보만 저장하고 자동 임베딩하지 않음
-- 초록만 확보: 제목·서지정보·초록을 대화 근거로 사용하지만 전문처럼
-  벡터 청킹하지 않음
 
 ## 프로젝트 구조
 
 ```text
 team-pubmed/
-├── api/                    # Vercel Function 진입점
-├── client/                 # React/Vite 프론트엔드
-├── server/                 # Express, PubMed/PMC, RAG, OpenAI
+├── api/
+│   └── index.js              # Vercel Function 진입점
+├── client/
+│   ├── src/                  # React 화면과 API 클라이언트
+│   ├── public/               # 정적 자산
+│   └── .env.example          # 브라우저 공개 환경변수 예시
+├── server/
+│   ├── src/                  # Express, 인증, PubMed, RAG, OpenAI
+│   ├── test/                 # Node 단위·API 테스트
+│   └── .env.example          # 서버 전용 환경변수 예시
 ├── supabase/
-│   └── schema.sql          # PostgreSQL, RLS, pgvector, Storage 정책
-├── docs/                   # 아키텍처와 배포 문서
-├── scripts/                # DB 적용·검증 스크립트
-├── templates/              # 기존 화면 비교 기준
-├── static/                 # 기존 화면 비교 기준
-└── tests/                  # 기존 구현 회귀 테스트
+│   └── schema.sql            # 테이블, RLS, pgvector, Storage 정책
+├── docs/
+│   ├── images/               # README 화면 캡처
+│   ├── renewal-architecture.md
+│   └── deployment-renewal.md
+├── scripts/                  # DB 적용·검증 스크립트
+├── templates/                # 기존 Jinja 화면 비교 기준
+├── static/                   # 기존 CSS·JavaScript 비교 기준
+├── tests/                    # 기존 FastAPI 회귀 테스트
+├── package.json              # npm workspace와 공통 명령
+└── vercel.json               # Vercel 빌드·라우팅·배포 브랜치
 ```
 
 기존 FastAPI/Jinja 구현은 디자인과 동작 비교 기준으로 보존합니다. 현재
-배포 애플리케이션은 `client/`, `server/`, `api/`를 사용합니다.
+Vercel 배포 애플리케이션은 `client/`, `server/`, `api/`를 사용합니다.
 
-## 로컬 실행
+## 로컬에서 실행하기
 
-### 1. 준비
+### 사전 준비
 
 - Node.js 22
 - npm
 - Supabase 프로젝트
 - OpenAI API key
+
+저장소를 받은 뒤 루트에서 실행합니다.
 
 ```powershell
 npm install
@@ -129,18 +273,28 @@ Copy-Item client\.env.example client\.env
 Copy-Item server\.env.example server\.env
 ```
 
-루트 `.env.example`은 환경변수 경계를 설명하는 안내 파일입니다. 실제
-개발 서버는 `client/.env`와 `server/.env`를 각각 읽습니다.
+루트 `.env.example`은 클라이언트와 서버의 환경변수 경계를 설명하는 안내
+파일입니다. 실제 애플리케이션은 `client/.env`와 `server/.env`를 읽습니다.
 
-### 2. Supabase 적용
+### Supabase 스키마 적용
 
-Supabase SQL Editor에서 [`supabase/schema.sql`](supabase/schema.sql)을
-실행합니다. 이 스키마에는 pgvector, RLS, 논문 문서·청크 테이블과 비공개
-`paper-pdfs` Storage bucket 정책이 포함되어 있습니다.
+Supabase Dashboard의 SQL Editor에서
+[`supabase/schema.sql`](supabase/schema.sql)을 실행합니다.
 
-### 3. 환경변수
+다음 항목이 함께 생성됩니다.
 
-클라이언트의 필수 공개 변수:
+- 사용자 프로필과 검색·논문 컬렉션
+- 논문 메타데이터·초록
+- PMC 공용 문서와 벡터 청크
+- 사용자 PDF 문서와 벡터 청크
+- 채팅방·메시지·논문 연결
+- pgvector와 HNSW 인덱스
+- 사용자별 RLS 정책
+- 비공개 `paper-pdfs` Storage bucket 정책
+
+### 클라이언트 환경변수
+
+[`client/.env.example`](client/.env.example)을 복사해 사용합니다.
 
 ```dotenv
 VITE_API_URL=
@@ -148,34 +302,41 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
 ```
 
-로컬과 Vercel 모두 `VITE_API_URL`을 비워 두면 같은 origin의 `/api`를
-호출합니다. 로컬에서는 Vite proxy가 요청을 `http://127.0.0.1:4000`으로
-전달합니다.
+`VITE_API_URL`은 로컬과 Vercel에서 비워 두는 것이 기본입니다.
 
-서버의 주요 변수:
+- 로컬: Vite proxy가 `/api`를 `http://127.0.0.1:4000`으로 전달
+- Vercel: 같은 배포의 `/api` Function 호출
 
-```dotenv
-PORT=4000
-CLIENT_ORIGIN=http://localhost:5173
-DATABASE_URL=postgresql://...
-DATABASE_SSL=true
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-OPENAI_API_KEY=your-openai-key
-OPENAI_CHAT_MODEL=gpt-5.6-terra
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-NCBI_EMAIL=your-email@example.com
-NCBI_API_KEY=
-NCBI_TOOL=publium
-UNPAYWALL_EMAIL=your-email@example.com
-DEV_USER_ID=
-```
+`VITE_*` 값은 브라우저 번들에 포함됩니다. service-role key, DB 비밀번호,
+OpenAI key 같은 비밀값을 넣으면 안 됩니다.
 
-정확한 설명은 [`server/.env.example`](server/.env.example)과
-[`client/.env.example`](client/.env.example)을 참고하세요. 서버 비밀값에는
-절대로 `VITE_` 접두어를 붙이지 않습니다.
+### 서버 환경변수
 
-### 4. 실행
+[`server/.env.example`](server/.env.example)을 복사해 사용합니다.
+
+| 변수 | 필수 | 설명 |
+| --- | --- | --- |
+| `NODE_ENV` | 예 | 로컬은 `development`, 운영은 Vercel 설정 사용 |
+| `PORT` | 예 | 로컬 Express 포트, 기본값 `4000` |
+| `CLIENT_ORIGIN` | 예 | 허용할 브라우저 origin, 여러 개면 쉼표로 구분 |
+| `DATABASE_URL` | 예 | Supabase PostgreSQL 연결 문자열 |
+| `DATABASE_SSL` | 예 | Supabase 연결 시 `true` |
+| `SUPABASE_URL` | 예 | Supabase Project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | 예 | 서버 전용 service-role/secret key |
+| `OPENAI_API_KEY` | AI 사용 시 | 채팅과 임베딩 호출용 |
+| `OPENAI_CHAT_MODEL` | 예 | 채팅 모델 |
+| `OPENAI_EMBEDDING_MODEL` | 예 | 기본값 `text-embedding-3-small` |
+| `NCBI_EMAIL` | 권장 | NCBI 요청 식별용 이메일 |
+| `NCBI_API_KEY` | 선택 | NCBI 호출 한도 확장 |
+| `NCBI_TOOL` | 예 | NCBI 요청 도구명, 기본값 `publium` |
+| `UNPAYWALL_EMAIL` | 권장 | Unpaywall API 연락 이메일 |
+| `DEV_USER_ID` | 로컬 선택 | Google 로그인 없는 전용 로컬 테스트 계정 UUID |
+
+Vercel에서는 연결 수가 제한된 direct DB 주소보다 Supabase transaction
+pooler URL을 권장합니다. DB 비밀번호에 특수문자가 있으면 URL encoding된
+연결 문자열을 사용합니다.
+
+### 개발 서버 실행
 
 ```powershell
 npm run dev
@@ -184,18 +345,25 @@ npm run dev
 - Frontend: <http://localhost:5173>
 - API health: <http://localhost:4000/api/health>
 
-Google 로그인 없이 테스트하려면 Supabase Authentication에
-`local-dev@publium.local` 전용 사용자를 만들고, 해당 UUID를
-`server/.env`의 `DEV_USER_ID`에 입력한 뒤 다음 주소로 접속합니다.
+정상이라면 health endpoint가 다음 값을 반환합니다.
 
-<http://localhost:5173/?dev=1>
+```json
+{"status":"ok"}
+```
 
-로컬 인증 우회는 개발 모드에서만 작동하며 Vercel에서는 비활성화됩니다.
-운영 사용자 UUID를 `DEV_USER_ID`로 사용하면 안 됩니다.
+### Google 로그인 없이 로컬 테스트
 
-## Google 로그인
+1. Supabase Authentication에 `local-dev@publium.local` 사용자를 만듭니다.
+2. 생성된 사용자 UUID를 `server/.env`의 `DEV_USER_ID`에 입력합니다.
+3. 서버를 다시 시작합니다.
+4. <http://localhost:5173/?dev=1>로 접속합니다.
 
-Supabase에서 Google provider를 활성화하고 다음 주소를 등록합니다.
+로컬 인증 우회는 `NODE_ENV=development`이면서 Vercel이 아닐 때만
+작동합니다. 운영 계정 UUID를 `DEV_USER_ID`로 사용하면 안 됩니다.
+
+## Google OAuth 설정
+
+Supabase에서 Google provider를 활성화하고 아래 URL을 등록합니다.
 
 ```text
 Supabase Site URL:
@@ -209,29 +377,81 @@ Google OAuth Authorized redirect URI:
 https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback
 ```
 
+Google Cloud에는 Vercel 주소가 아니라 Supabase callback URL을 Authorized
+redirect URI로 등록합니다. 로그인 완료 후 사용자를 돌려보낼 최종 주소는
+Supabase의 Site URL과 Redirect URLs에서 관리합니다.
+
+## 자주 사용하는 명령
+
+| 명령 | 역할 |
+| --- | --- |
+| `npm run dev` | 클라이언트와 서버 동시 실행 |
+| `npm run dev:client` | Vite 클라이언트만 실행 |
+| `npm run dev:server` | Express 서버만 실행 |
+| `npm run build` | React 프로덕션 빌드 |
+| `npm run test` | 서버 테스트 |
+| `npm run check` | 서버 테스트와 클라이언트 빌드 전체 검증 |
+| `npm run start` | Express 서버 실행 |
+
+## 데이터와 보안 원칙
+
+- 사용자별 논문 컬렉션·채팅·업로드 PDF를 인증된 사용자 ID로 제한합니다.
+- Supabase RLS로 브라우저의 다른 사용자 데이터 접근을 차단합니다.
+- PDF 원본은 공개 URL이 아닌 만료되는 signed URL로 제공합니다.
+- 서버 비밀값은 Vercel Function에서만 사용합니다.
+- `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`,
+  `NCBI_API_KEY`에는 절대로 `VITE_` 접두어를 붙이지 않습니다.
+- 사용자·업무 데이터 초기화는 `is_del` 기반 소프트 삭제를 기본으로 합니다.
+- 라이선스가 확인되지 않은 출판사 본문은 서버에 저장하지 않습니다.
+
+## 현재 제한 사항
+
+- 스캔 이미지 PDF OCR 미지원
+- 유료 출판사 PDF 자동 다운로드 미지원
+- Unpaywall·Crossref PDF 후보의 자동 파싱·임베딩 미지원
+- 초록 기반 논문은 초록에 없는 세부 내용을 답할 수 없음
+- 외부 원문 페이지 안의 직접 하이라이트 미지원
+- AI 답변은 논문 해석 보조용이며 연구자의 원문 검토를 대체하지 않음
+
 ## 검증
 
 ```powershell
 npm run check
 ```
 
-서버 테스트와 클라이언트 프로덕션 빌드를 함께 실행합니다.
+현재 검증 항목에는 다음 내용이 포함됩니다.
 
-## 배포
+- 인증과 로컬 테스트 계정 제한
+- CORS와 Vercel same-origin 요청
+- PubMed XML 파싱
+- PMC/BioC 본문 파싱
+- 청킹과 여러 논문의 근거 균형
+- 출처 문장 선택과 하이라이트 범위
+- 사용자별 초기화와 소프트 삭제
+- React 프로덕션 빌드
 
-- Vercel Root Directory: `.`
-- Framework Preset: Vite
-- Production Branch: `deploy_vercel`
-- Function entry: `api/index.js`
-- Output Directory: `client/dist`
-- Node.js: 22.x
+## Vercel 배포
 
-배포 흐름:
+| 설정 | 값 |
+| --- | --- |
+| Framework Preset | Vite |
+| Root Directory | `.` |
+| Install Command | `npm install` |
+| Build Command | `npm run build` |
+| Output Directory | `client/dist` |
+| Production Branch | `deploy_vercel` |
+| Function entry | `api/index.js` |
+| Node.js | 22.x |
+
+브랜치 흐름:
 
 ```text
 renewal → main → deploy_vercel → Vercel Production
 ```
 
-`vercel.json`에서 `deploy_vercel` 이외 브랜치의 자동 배포를 차단합니다.
-환경변수, OAuth, 배포 및 롤백 절차는
+`vercel.json`에서 `deploy_vercel` 이외 브랜치의 Git 자동 배포를
+차단합니다. 따라서 `renewal`과 `main`에 푸시해도 운영 배포는 발생하지
+않으며, 검증된 `main`을 `deploy_vercel`에 반영할 때만 배포됩니다.
+
+환경변수, OAuth, 배포 확인과 롤백 절차는
 [`docs/deployment-renewal.md`](docs/deployment-renewal.md)를 참고하세요.
