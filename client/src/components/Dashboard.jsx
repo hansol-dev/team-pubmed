@@ -394,6 +394,14 @@ export default function Dashboard({ session, preview = false }) {
 
   const logout = () => supabase?.auth.signOut();
   const displayName = user.user_metadata?.full_name || user.user_metadata?.name || user.email || "사용자";
+  const openResearchGraph = () => {
+    const graphUrl = new URL("/research-graph", window.location.origin);
+    if (new URLSearchParams(window.location.search).get("dev") === "1") {
+      graphUrl.searchParams.set("dev", "1");
+    }
+    if (preview) graphUrl.searchParams.set("preview", "1");
+    window.open(graphUrl.toString(), "_blank", "noopener,noreferrer");
+  };
 
   return (
     <main className={`app-shell ${mobileSheet ? "collect-sheet-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -417,7 +425,18 @@ export default function Dashboard({ session, preview = false }) {
           <div className="user-menu"><span className="profile-dot">{displayName.slice(0, 1)}</span><span>{displayName}</span><button type="button" className="text-button" onClick={logout}>로그아웃</button></div>
         </header>
         <nav className="tabs" aria-label="주요 메뉴">
-          {["overview", "papers", "chat"].map((name) => <button key={name} className={`tab ${tab === name ? "is-active" : ""}`} onClick={() => selectTab(name)}>{name === "overview" ? "개요" : name === "papers" ? "논문 목록" : "AI 챗봇"}</button>)}
+          {[
+            ["overview", "개요"],
+            ["papers", "논문 목록"],
+            ["chat", "AI 챗봇"],
+          ].map(([name, label]) => (
+            <button key={name} className={`tab ${tab === name ? "is-active" : ""}`} onClick={() => selectTab(name)}>
+              {label}
+            </button>
+          ))}
+          <button className="tab graph-launch-tab" type="button" onClick={openResearchGraph}>
+            지식 그래프 <span aria-hidden="true">↗</span>
+          </button>
         </nav>
         {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
         <Overview active={tab === "overview"} stats={overview} collectionStats={collectionStats} />
