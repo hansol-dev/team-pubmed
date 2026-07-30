@@ -1,6 +1,6 @@
 # Publium Express API
 
-Node 20 + Express backend for the renewed Publium client. Supabase provides Auth and PostgreSQL/pgvector. The API stores PubMed metadata and abstracts when a search is performed. PMC full text is fetched only once, when papers are attached to a conversation; subsequent questions use saved chunks.
+Node 22 + Express backend for the renewed Publium client. Supabase provides Auth and PostgreSQL/pgvector. The API stores PubMed metadata and abstracts when a search is performed. PMC full text is fetched only once, when papers are attached to a conversation; subsequent questions use saved chunks.
 
 Publisher/DOI pages are never crawled. A DOI is exposed only as an outbound link. If a paper has no reusable PMC full text, the stored PubMed abstract becomes its RAG document and the UI receives `abstract_only`.
 
@@ -45,4 +45,11 @@ event: done
 data: {}
 ```
 
-Run `npm test` for parser, chunker, policy guard, and HTTP-contract tests.
+Chat requests run through a LangGraph workflow before SSE emission:
+
+1. Block personal medical advice and prompt-injection attempts.
+2. Redact sensitive values before retrieval and LangChain model execution.
+3. Generate a grounded answer with `ChatOpenAI`.
+4. Validate the complete output and replace unsafe medical instructions.
+
+Run `npm test` for parser, chunker, LangGraph guardrails, and HTTP-contract tests.

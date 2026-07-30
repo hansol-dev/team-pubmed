@@ -16,6 +16,12 @@ const GRAPH_WIDTH = 1400;
 const GRAPH_HEIGHT = 860;
 const DEFAULT_CAMERA = { x: 0, y: 0, width: GRAPH_WIDTH, height: GRAPH_HEIGHT };
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const ARROW_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+
+function isEditableTarget(target) {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+}
 
 const topicTerms = {
   oncology: ["암", "종양", "항암", "바이오마커", "정밀의료", "cancer", "oncology", "tumor", "biomarker"],
@@ -416,6 +422,8 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
   const draggedRef = useRef(false);
   const simulationRef = useRef(null);
   const animationFrameRef = useRef(null);
+  const keyboardFrameRef = useRef(null);
+  const pressedArrowKeysRef = useRef(new Set());
   const svgRef = useRef(null);
   const nodeElementRefs = useRef(new Map());
   const edgeElementRefs = useRef(new Map());
@@ -517,6 +525,83 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
       if (simulationRef.current === simulation) simulationRef.current = null;
     };
   }, [graph, graphMode, motionPaused]);
+
+  useEffect(() => {
+    if (graphMode !== "2d") return undefined;
+
+    let lastFrameTime = null;
+    const moveCamera = (timestamp) => {
+      const pressedKeys = pressedArrowKeysRef.current;
+      if (pressedKeys.size === 0) {
+        keyboardFrameRef.current = null;
+        lastFrameTime = null;
+        return;
+      }
+
+      const elapsedSeconds = lastFrameTime == null
+        ? 0
+        : Math.min((timestamp - lastFrameTime) / 1000, 0.05);
+      lastFrameTime = timestamp;
+      if (elapsedSeconds > 0) {
+        const horizontal = Number(pressedKeys.has("ArrowRight")) - Number(pressedKeys.has("ArrowLeft"));
+        const vertical = Number(pressedKeys.has("ArrowDown")) - Number(pressedKeys.has("ArrowUp"));
+        const directionLength = Math.hypot(horizontal, vertical) || 1;
+        setCamera((current) => ({
+          ...current,
+          x: current.x + (horizontal / directionLength) * current.width * 0.45 * elapsedSeconds,
+          y: current.y + (vertical / directionLength) * current.height * 0.45 * elapsedSeconds,
+        }));
+      }
+      keyboardFrameRef.current = window.requestAnimationFrame(moveCamera);
+    };
+
+    const handleKeyDown = (event) => {
+      if (!ARROW_KEYS.has(event.key) || isEditableTarget(event.target)) return;
+      event.preventDefault();
+      const isNewPress = !pressedArrowKeysRef.current.has(event.key);
+      pressedArrowKeysRef.current.add(event.key);
+      if (isNewPress) {
+        setCamera((current) => ({
+          ...current,
+          x: current.x + (
+            event.key === "ArrowRight" ? current.width * 0.035
+              : event.key === "ArrowLeft" ? -current.width * 0.035
+                : 0
+          ),
+          y: current.y + (
+            event.key === "ArrowDown" ? current.height * 0.035
+              : event.key === "ArrowUp" ? -current.height * 0.035
+                : 0
+          ),
+        }));
+      }
+      if (!keyboardFrameRef.current) {
+        keyboardFrameRef.current = window.requestAnimationFrame(moveCamera);
+      }
+    };
+    const handleKeyUp = (event) => {
+      if (!pressedArrowKeysRef.current.delete(event.key)) return;
+      event.preventDefault();
+    };
+    const stopKeyboardMovement = () => {
+      pressedArrowKeysRef.current.clear();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", stopKeyboardMovement);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", stopKeyboardMovement);
+      pressedArrowKeysRef.current.clear();
+      if (keyboardFrameRef.current) {
+        window.cancelAnimationFrame(keyboardFrameRef.current);
+        keyboardFrameRef.current = null;
+      }
+    };
+  }, [graphMode]);
+
   const resultIds = useMemo(() => new Set(results.map((item) => item.id)), [results]);
   const paperLookupResultIds = useMemo(
     () => new Set(paperLookupResults.map((entry) => entry.paper.id)),
@@ -1347,12 +1432,14 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
                   <span>드래그</span> 노드 이동
                   <i /> <span>더블클릭</span> 2단계 관계 확장
                   <i /> <span>휠</span> 확대·축소
+                  <i /> <span>방향키</span> 화면 이동
                 </>
               ) : (
                 <>
                   <span>드래그</span> 화면 회전
                   <i /> <span>클릭</span> 논문 선택
                   <i /> <span>휠</span> 확대·축소
+                  <i /> <span>방향키</span> 전후·좌우 이동
                 </>
               )}
             </div>
