@@ -1,14 +1,13 @@
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
-import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { z } from "zod";
+import { runGuardedChat } from "./chatbot.js";
 import { config } from "./config.js";
 import { requireUser, supabaseAdmin } from "./auth.js";
 import { query, transaction } from "./db.js";
-import { BLOCKED_RESPONSE, isMedicalAdviceRequest } from "./guard.js";
 import { addToCollection, listPapers, upsertPapers } from "./papers.js";
 import {
   ensurePaperDocument,
@@ -642,45 +641,36 @@ export function createApp({ authMiddleware = requireUser } = {}) {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     const emit = (token) => emitEvent("token", { token });
 
-    if (isMedicalAdviceRequest(input.message)) {
-      emit(BLOCKED_RESPONSE);
-      await saveMessage(req.user.id, input.conversationId, "assistant", BLOCKED_RESPONSE);
-      res.write("event: done\ndata: {}\n\n");
-      return res.end();
-    }
-    if (!config.openaiApiKey) {
-      const message = "OPENAI_API_KEY가 설정되지 않았습니다.";
-      emit(message);
-      await saveMessage(req.user.id, input.conversationId, "assistant", message);
-      res.write("event: done\ndata: {}\n\n");
-      return res.end();
-    }
-
-    const [context, history, scopeResult] = await Promise.all([
-      retrieveRoomContext(req.user.id, input.conversationId, input.message),
-      messagesForRoom(req.user.id, input.conversationId, 30),
-      query(
-        `SELECT count(rp.pmid)::int AS paper_count,
-                count(rp.pmid) FILTER (
-                  WHERE p.rag_status='ready' OR EXISTS (
-                    SELECT 1 FROM user_paper_documents upd
-                    WHERE upd.user_id=rp.user_id AND upd.pmid=rp.pmid
-                      AND upd.is_current AND not upd.is_del
-                  )
-                )::int AS full_text_count
-         FROM chat_room_papers rp
-         JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id AND r.is_del=false
-         JOIN pubmed_records p ON p.pmid=rp.pmid
-         WHERE rp.chat_room_id=$1 AND rp.user_id=$2`,
-        [input.conversationId, req.user.id],
-      ),
-    ]);
-    const scope = evidenceScope(scopeResult.rows[0]);
-    const evidence = context.map((item, index) =>
-      `[근거 ${index + 1}] PMID ${item.pmid} / ${item.section}\n${item.content}`
-    ).join("\n\n");
-    const system = evidence
-      ? `당신은 선택된 PubMed 논문을 분석하는 연구 보조자입니다.
+    let result;
+    try {
+      result = await runGuardedChat({
+        message: input.message,
+        prepare: async (sanitizedMessage) => {
+          const [context, history, scopeResult] = await Promise.all([
+            retrieveRoomContext(req.user.id, input.conversationId, sanitizedMessage),
+            messagesForRoom(req.user.id, input.conversationId, 30),
+            query(
+              `SELECT count(rp.pmid)::int AS paper_count,
+                      count(rp.pmid) FILTER (
+                        WHERE p.rag_status='ready' OR EXISTS (
+                          SELECT 1 FROM user_paper_documents upd
+                          WHERE upd.user_id=rp.user_id AND upd.pmid=rp.pmid
+                            AND upd.is_current AND not upd.is_del
+                        )
+                      )::int AS full_text_count
+               FROM chat_room_papers rp
+               JOIN chat_rooms r ON r.id=rp.chat_room_id AND r.user_id=rp.user_id AND r.is_del=false
+               JOIN pubmed_records p ON p.pmid=rp.pmid
+               WHERE rp.chat_room_id=$1 AND rp.user_id=$2`,
+              [input.conversationId, req.user.id],
+            ),
+          ]);
+          const scope = evidenceScope(scopeResult.rows[0]);
+          const evidence = context.map((item, index) =>
+            `[근거 ${index + 1}] PMID ${item.pmid} / ${item.section}\n${item.content}`
+          ).join("\n\n");
+          const system = evidence
+            ? `당신은 선택된 PubMed 논문을 분석하는 연구 보조자입니다.
 제공된 근거 밖의 내용을 사실처럼 만들지 말고, 근거가 부족하면 명확히 말하세요.
 근거 범위: ${scope.instruction}
 이전 어시스턴트 답변은 논문 근거가 아닙니다. 이전 답변과 아래 근거가 충돌하면 반드시 아래 근거를 따르세요.
@@ -698,7 +688,7 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 긴 문단을 피하고 문단은 최대 3문장으로 제한하세요.
 
 ${evidence}`
-      : `당신은 PubMed 연구 탐색을 돕는 연구 보조자입니다.
+            : `당신은 PubMed 연구 탐색을 돕는 연구 보조자입니다.
 현재 이 채팅방에는 선택된 논문이 없습니다. 특정 논문의 결과를 아는 것처럼 답하지 마세요.
 사용자의 연구 질문 구체화, PubMed 검색어·검색식 구성, 논문 선별 기준 정리를 도우세요.
 개인 진단·처방·복용량 안내는 하지 말고 한국어로 답하세요.
@@ -706,44 +696,31 @@ ${evidence}`
 첫 답변에는 '결론'이라는 제목을 붙이지 말고 바로 핵심 내용을 말하세요.
 이후 내용에는 Markdown 제목과 짧은 불릿 목록을 사용하고, 한 문단은 최대 3문장으로 제한하세요.
 논문 분석이 필요하면 먼저 논문 목록에서 논문을 선택해 채팅방으로 보내도록 안내하세요.`;
-    const client = new OpenAI({ apiKey: config.openaiApiKey });
-    let stream;
-    try {
-      stream = await client.chat.completions.create({
-        model: config.chatModel,
-        stream: true,
-        messages: [
-          { role: "system", content: system },
-          ...history.slice(0, -1).map((item) => ({ role: item.role, content: item.content })),
-          { role: "user", content: input.message },
-        ],
+          return {
+            context,
+            history: history.slice(0, -1).map((item) => ({ role: item.role, content: item.content })),
+            system,
+          };
+        },
       });
     } catch (error) {
-      if (config.env !== "test") console.error("OpenAI stream startup failed", error);
+      if (config.env !== "test") console.error("Guarded chat workflow failed", error);
       const message = "AI 응답을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.";
       emit(message);
       await saveMessage(req.user.id, input.conversationId, "assistant", message);
       res.write("event: done\ndata: {}\n\n");
       return res.end();
     }
-    let answer = "";
-    try {
-      for await (const part of stream) {
-        const token = part.choices[0]?.delta?.content || "";
-        if (token) {
-          answer += token;
-          emit(token);
-        }
-      }
-      const sources = contextSources(context, { question: input.message, answer });
-      if (sources.length) emitEvent("sources", { sources });
-      if (answer) await saveMessage(req.user.id, input.conversationId, "assistant", answer, sources);
-      res.write("event: done\ndata: {}\n\n");
-      res.end();
-    } catch (error) {
-      res.write(`event: error\ndata: ${JSON.stringify({ error: "응답 스트리밍이 중단되었습니다." })}\n\n`);
-      res.end();
-    }
+
+    const answer = result.response;
+    emit(answer);
+    const sources = result.decision === "allow"
+      ? contextSources(result.context, { question: input.message, answer })
+      : [];
+    if (sources.length) emitEvent("sources", { sources });
+    await saveMessage(req.user.id, input.conversationId, "assistant", answer, sources);
+    res.write("event: done\ndata: {}\n\n");
+    res.end();
   }));
 
   app.use((error, _req, res, _next) => {
