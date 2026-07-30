@@ -13,6 +13,13 @@ const HIT_MATERIAL = new THREE.MeshBasicMaterial({
   opacity: 0,
   depthWrite: false,
 });
+const ARROW_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+const KEYBOARD_MOVE_SPEED = 120;
+
+function isEditableTarget(target) {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+}
 
 function escapeHtml(value) {
   return String(value || "")
@@ -69,6 +76,8 @@ export default function ResearchGraph3D({
   const graphRef = useRef(null);
   const fittedRef = useRef(false);
   const focusedNodeRef = useRef(null);
+  const keyboardFrameRef = useRef(null);
+  const pressedArrowKeysRef = useRef(new Set());
   const [size, setSize] = useState({ width: 800, height: 600 });
 
   useEffect(() => {
@@ -132,6 +141,93 @@ export default function ResearchGraph3D({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [resetViewToken]);
+
+  useEffect(() => {
+    let lastFrameTime = null;
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+    const movement = new THREE.Vector3();
+
+    const translateCamera = (horizontal, depth, distance) => {
+      const instance = graphRef.current;
+      const camera = instance?.camera?.();
+      const controls = instance?.controls?.();
+      if (!camera || !controls?.target) return;
+
+      camera.getWorldDirection(forward);
+      right.crossVectors(forward, camera.up).normalize();
+      movement
+        .copy(forward)
+        .multiplyScalar(depth)
+        .addScaledVector(right, horizontal);
+      if (movement.lengthSq() === 0) return;
+
+      movement.normalize().multiplyScalar(distance);
+      camera.position.add(movement);
+      controls.target.add(movement);
+      controls.update?.();
+      camera.updateMatrixWorld();
+      instance.renderer?.()?.render(instance.scene?.(), camera);
+    };
+
+    const moveCamera = (timestamp) => {
+      const pressedKeys = pressedArrowKeysRef.current;
+      if (pressedKeys.size === 0) {
+        keyboardFrameRef.current = null;
+        lastFrameTime = null;
+        return;
+      }
+
+      const elapsedSeconds = lastFrameTime == null
+        ? 0
+        : Math.min((timestamp - lastFrameTime) / 1000, 0.05);
+      lastFrameTime = timestamp;
+      if (elapsedSeconds > 0) {
+        const horizontal = Number(pressedKeys.has("ArrowRight")) - Number(pressedKeys.has("ArrowLeft"));
+        const depth = Number(pressedKeys.has("ArrowUp")) - Number(pressedKeys.has("ArrowDown"));
+        translateCamera(horizontal, depth, KEYBOARD_MOVE_SPEED * elapsedSeconds);
+      }
+      keyboardFrameRef.current = window.requestAnimationFrame(moveCamera);
+    };
+
+    const handleKeyDown = (event) => {
+      if (!ARROW_KEYS.has(event.key) || isEditableTarget(event.target)) return;
+      event.preventDefault();
+      const isNewPress = !pressedArrowKeysRef.current.has(event.key);
+      pressedArrowKeysRef.current.add(event.key);
+      if (isNewPress) {
+        translateCamera(
+          Number(event.key === "ArrowRight") - Number(event.key === "ArrowLeft"),
+          Number(event.key === "ArrowUp") - Number(event.key === "ArrowDown"),
+          12,
+        );
+      }
+      if (!keyboardFrameRef.current) {
+        keyboardFrameRef.current = window.requestAnimationFrame(moveCamera);
+      }
+    };
+    const handleKeyUp = (event) => {
+      if (!pressedArrowKeysRef.current.delete(event.key)) return;
+      event.preventDefault();
+    };
+    const stopKeyboardMovement = () => {
+      pressedArrowKeysRef.current.clear();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", stopKeyboardMovement);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", stopKeyboardMovement);
+      pressedArrowKeysRef.current.clear();
+      if (keyboardFrameRef.current) {
+        window.cancelAnimationFrame(keyboardFrameRef.current);
+        keyboardFrameRef.current = null;
+      }
+    };
+  }, []);
 
   const topicById = useMemo(
     () => new Map(topics.map((topic) => [topic.id, topic])),
@@ -220,7 +316,7 @@ export default function ResearchGraph3D({
         onNodeDragEnd={(node) => onSelect(node.id)}
         onNodeClick={(node) => onSelect(node.id)}
       />
-      <div className="graph-3d-guide">드래그로 회전 · 휠로 확대 · 노드를 눌러 상세 보기</div>
+      <div className="graph-3d-guide">드래그로 회전 · 휠로 확대 · 방향키로 전후·좌우 이동 · 노드를 눌러 상세 보기</div>
     </div>
   );
 }
