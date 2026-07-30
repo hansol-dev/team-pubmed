@@ -255,7 +255,8 @@ DB에서 관련 문단을 찾아 AI에게 참고 자료로 전달하는 방식�
   → 질문 임베딩 생성
   → 의미가 가까운 논문 청크 검색
   → 논문 개요 + 검색된 근거를 AI에 전달
-  → 스트리밍 답변
+  → LangGraph 입력 가드 → LangChain 답변 생성 → 출력 가드
+  → 검증된 답변을 SSE로 전달
   → 출처 문장과 하이라이트 표시
 ```
 
@@ -298,7 +299,9 @@ flowchart LR
     F -->|/api| B[Express Vercel Function]
     B --> P[PubMed / PMC / BioC]
     B --> O[Unpaywall / Crossref]
-    B --> AI[OpenAI Chat / Embeddings]
+    B --> G[LangGraph Guardrails]
+    G --> AI[LangChain / OpenAI Chat]
+    B --> AI2[OpenAI Embeddings]
     B --> DB[(Supabase PostgreSQL + pgvector)]
     F --> S[Supabase 비공개 PDF Storage]
     B --> S
@@ -313,7 +316,13 @@ flowchart LR
 | PDF Storage | Supabase Storage | 비공개 bucket |
 | 논문 데이터 | PubMed E-utilities, PMC, BioC | NCBI |
 | 원문 탐색 | PMC OA, Unpaywall, Crossref | 외부 API |
-| AI | OpenAI Chat, Embeddings, SSE | Vercel Function |
+| AI | LangChain.js, LangGraph.js, OpenAI Chat·Embeddings, SSE | Vercel Function |
+
+챗봇은 LangGraph 상태 그래프로 입력 검사, 컨텍스트 준비, LangChain 모델
+호출, 출력 검사를 순서대로 실행합니다. 개인 의료 조언과 프롬프트 탈취
+요청은 검색·모델 호출 전에 차단하고, 이메일·전화번호·API 키·토큰은 모델에
+전달하기 전에 마스킹합니다. 모델의 전체 답변도 다시 검사한 뒤 안전한
+응답만 SSE로 전달합니다.
 
 ## 주요 설계 결정
 
@@ -323,7 +332,7 @@ flowchart LR
 | 공개 전문과 사용자 PDF 분리 | PMC 공개 문서는 공용 캐시로 재사용하고, 업로드 PDF는 소유자만 접근 |
 | 초록을 검색 시점에 저장 | PubMed 재호출을 줄이고 전문이 없을 때도 최소한의 논문 근거를 유지 |
 | 문서 전체 대신 관련 청크 전달 | 질문마다 긴 원문을 다시 읽는 비용을 줄이고 근거 위치를 추적 |
-| SSE 스트리밍 응답 | 긴 분석 답변을 기다리지 않고 생성되는 즉시 화면에 표시 |
+| 검증 후 SSE 응답 | 전체 답변의 안전성을 검사한 뒤 기존 SSE 계약으로 화면에 전달 |
 | `is_del` 소프트 삭제 | 사용자 초기화와 채팅 삭제 기록을 복구 가능한 상태로 보존 |
 | Graph RAG 코퍼스 분리 | 운영 사용자 데이터와 시연용 연구 그래프를 섞지 않고 안정적으로 제공 |
 | Vercel same-origin API | 프론트엔드와 API를 한 도메인에서 제공해 CORS와 배포 구성을 단순화 |
@@ -539,6 +548,7 @@ npm run check
 - PMC/BioC 본문 파싱
 - 청킹과 여러 논문의 근거 균형
 - 출처 문장 선택과 하이라이트 범위
+- LangGraph 입력·출력 가드와 민감정보 마스킹
 - 사용자별 초기화와 소프트 삭제
 - React 프로덕션 빌드
 
