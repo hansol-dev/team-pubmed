@@ -33,20 +33,79 @@ export async function upsertPapers(papers) {
   });
 }
 
-export async function addToCollection(userId, pmids, keyword = "") {
-  const result = await query(
-    `INSERT INTO user_paper_collections (user_id, pmid)
-     SELECT $1, p.pmid FROM pubmed_records p WHERE p.pmid = ANY($2::text[])
+export async function addToCollectionWithClient(client, userId, pmids, searchRunId = null) {
+  if (searchRunId) {
+    const sourceRun = await client.query(
+      `SELECT id FROM search_runs
+       WHERE id=$1 AND user_id=$2 AND is_del=false`,
+      [searchRunId, userId],
+    );
+    if (!sourceRun.rowCount) {
+      const error = new Error("Search result not found");
+      error.status = 404;
+      throw error;
+    }
+  }
+
+  const result = await client.query(
+    `INSERT INTO user_paper_collections (user_id, pmid, first_search_run_id)
+     SELECT $1, p.pmid, $3::uuid
+     FROM pubmed_records p
+     WHERE p.pmid = ANY($2::text[])
+       AND ($3::uuid IS NULL OR EXISTS (
+         SELECT 1 FROM search_run_papers result
+         WHERE result.search_run_id=$3 AND result.user_id=$1
+           AND result.pmid=p.pmid
+       ))
      ON CONFLICT (user_id, pmid) DO UPDATE
-     SET is_del=false,deleted_at=NULL,deleted_by=NULL,saved_at=now()
+     SET is_del=false,deleted_at=NULL,deleted_by=NULL,delete_reason=NULL,saved_at=now(),
+         first_search_run_id=COALESCE(user_paper_collections.first_search_run_id,
+                                      EXCLUDED.first_search_run_id)
      WHERE user_paper_collections.is_del=true
      RETURNING pmid`,
-    [userId, pmids]
+    [userId, pmids, searchRunId],
   );
+
+  if (searchRunId) {
+    await client.query(
+      `UPDATE search_run_papers result
+       SET added_to_collection=true
+       WHERE result.search_run_id=$1 AND result.user_id=$2
+         AND result.pmid=ANY($3::text[])
+         AND EXISTS (
+           SELECT 1 FROM user_paper_collections collection
+           WHERE collection.user_id=$2 AND collection.pmid=result.pmid
+             AND collection.is_del=false
+         )`,
+      [searchRunId, userId, pmids],
+    );
+  }
+
   return result.rows.map((row) => row.pmid);
 }
 
-export async function listPapers(userId, filters = {}) {
+export async function addToCollection(userId, pmids, searchRunId = null) {
+  return transaction((client) =>
+    addToCollectionWithClient(client, userId, pmids, searchRunId));
+}
+
+export async function removeFromCollectionWithClient(client, userId, pmid) {
+  const result = await client.query(
+    `UPDATE user_paper_collections
+     SET is_del=true,deleted_at=now(),deleted_by=$1,
+         delete_reason='user_removed_interest'
+     WHERE user_id=$1 AND pmid=$2 AND is_del=false
+     RETURNING pmid`,
+    [userId, pmid],
+  );
+  return Boolean(result.rowCount);
+}
+
+export async function removeFromCollection(userId, pmid) {
+  return removeFromCollectionWithClient({ query }, userId, pmid);
+}
+
+export async function listPapersWithClient(client, userId, filters = {}) {
   const values = [userId];
   const where = ["up.user_id = $1", "up.is_del = false"];
   if (filters.keyword) {
@@ -65,9 +124,38 @@ export async function listPapers(userId, filters = {}) {
     values.push(filters.journal);
     where.push(`p.journal = $${values.length}`);
   }
+  if (filters.projectId === "unassigned") {
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM project_papers project_link
+      JOIN research_projects project
+        ON project.id=project_link.project_id AND project.user_id=project_link.user_id
+      WHERE project_link.user_id=up.user_id AND project_link.pmid=up.pmid
+        AND project_link.is_del=false AND project.is_del=false
+    )`);
+  } else if (filters.projectId) {
+    values.push(filters.projectId);
+    where.push(`EXISTS (
+      SELECT 1 FROM project_papers project_link
+      JOIN research_projects project
+        ON project.id=project_link.project_id AND project.user_id=project_link.user_id
+      WHERE project_link.user_id=up.user_id AND project_link.pmid=up.pmid
+        AND project_link.project_id=$${values.length}
+        AND project_link.is_del=false AND project.is_del=false
+    )`);
+  }
   values.push(filters.limit || 100);
-  const result = await query(
+  const result = await client.query(
     `SELECT p.*, p.publication_year AS pub_year, up.saved_at AS collected_at,
+       COALESCE((
+         SELECT jsonb_agg(jsonb_build_object(
+           'id',project.id,'name',project.name,'color',project.color
+         ) ORDER BY project.sort_order,project.created_at,project.id)
+         FROM project_papers project_link
+         JOIN research_projects project
+           ON project.id=project_link.project_id AND project.user_id=project_link.user_id
+         WHERE project_link.user_id=up.user_id AND project_link.pmid=up.pmid
+           AND project_link.is_del=false AND project.is_del=false
+       ),'[]'::jsonb) AS projects,
        CASE WHEN user_document.id IS NOT NULL OR p.rag_status='ready' THEN 'ready'
             ELSE p.rag_status END AS document_status,
        CASE WHEN user_document.id IS NOT NULL THEN 'user_pdf'
@@ -88,4 +176,8 @@ export async function listPapers(userId, filters = {}) {
     values
   );
   return result.rows;
+}
+
+export async function listPapers(userId, filters = {}) {
+  return listPapersWithClient({ query }, userId, filters);
 }

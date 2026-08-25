@@ -8,7 +8,16 @@ import { runGuardedChat } from "./chatbot.js";
 import { config } from "./config.js";
 import { requireUser, supabaseAdmin } from "./auth.js";
 import { query, transaction } from "./db.js";
-import { addToCollection, listPapers, upsertPapers } from "./papers.js";
+import { addToCollection, listPapers, removeFromCollection, upsertPapers } from "./papers.js";
+import {
+  assignPapersToProjects,
+  createProject,
+  listProjects,
+  replacePaperProjects,
+  restoreProject,
+  softDeleteProject,
+  updateProject,
+} from "./projects.js";
 import {
   ensurePaperDocument,
   getRoomPaperDocument,
@@ -17,6 +26,7 @@ import {
   retrieveRoomContext,
 } from "./pmc.js";
 import { countPubMedByYear, searchPubMed } from "./pubmed.js";
+import { getInterestWordCloud } from "./wordCloud.js";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const parse = (schema, value) => schema.parse(value);
@@ -25,8 +35,29 @@ const searchSchema = z.object({
   yearFrom: z.coerce.number().int().min(1900).max(2100),
   yearTo: z.coerce.number().int().min(1900).max(2100),
   maxCount: z.coerce.number().int().min(1).max(100).default(50),
-  saveToCollection: z.boolean().optional().default(true),
+  // Search results and the user's interest collection are intentionally separate.
+  // Keeping this compatibility field as false-only makes old auto-save clients fail
+  // loudly instead of silently collecting every search result again.
+  saveToCollection: z.literal(false).optional().default(false),
 }).refine((value) => value.yearFrom <= value.yearTo, { message: "yearFrom must be <= yearTo" });
+const projectCreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).optional().default(""),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().default("#7c6ee6"),
+});
+const projectUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  description: z.string().trim().max(500).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+}).refine((value) => Object.keys(value).length > 0, { message: "At least one field is required" });
+const projectIdSchema = z.string().uuid();
+const bulkPaperProjectSchema = z.object({
+  pmids: z.array(z.string().regex(/^\d+$/)).min(1).max(100),
+  projectIds: z.array(z.string().uuid()).max(100).default([]),
+  mode: z.enum(["add", "replace"]).default("add"),
+}).refine((value) => value.mode === "replace" || value.projectIds.length > 0, {
+  message: "At least one project is required in add mode",
+});
 const roomSchema = z.object({
   pmids: z.array(z.string().regex(/^\d+$/)).max(5).default([]),
   title: z.string().trim().max(120).optional(),
@@ -48,6 +79,7 @@ const pdfUploadSchema = z.object({
   const total = value.sections.reduce((sum, item) => sum + item.text.length, 0);
   if (total > 3_500_000) ctx.addIssue({ code: "custom", message: "Extracted PDF text is too large" });
 });
+const wordCloudTermLimitSchema = z.coerce.number().int().min(10).max(200).default(160);
 
 export function fillYearRange(yearFrom, yearTo, counts = {}) {
   if (!Number.isInteger(yearFrom) || !Number.isInteger(yearTo) || yearFrom > yearTo) return counts;
@@ -71,9 +103,24 @@ export async function resetUserWorkspace(client, userId) {
      WHERE user_id=$1 AND is_del=false RETURNING id`,
     [userId],
   );
+  const projectPapers = await client.query(
+    `UPDATE project_papers
+     SET is_del=true,deleted_at=now(),deleted_by=$1,
+         delete_reason='workspace_reset'
+     WHERE user_id=$1 AND is_del=false RETURNING pmid`,
+    [userId],
+  );
+  const projects = await client.query(
+    `UPDATE research_projects
+     SET is_del=true,deleted_at=now(),deleted_by=$1,
+         delete_reason='workspace_reset'
+     WHERE user_id=$1 AND is_del=false RETURNING id`,
+    [userId],
+  );
   const collection = await client.query(
     `UPDATE user_paper_collections
-     SET is_del=true,deleted_at=now(),deleted_by=$1
+     SET is_del=true,deleted_at=now(),deleted_by=$1,
+         delete_reason='workspace_reset'
      WHERE user_id=$1 AND is_del=false RETURNING pmid`,
     [userId],
   );
@@ -87,6 +134,8 @@ export async function resetUserWorkspace(client, userId) {
     removedChatCount: chatRooms.rowCount,
     removedMessageCount: messages.rowCount,
     removedPaperCount: collection.rowCount,
+    removedProjectCount: projects.rowCount,
+    removedProjectPaperCount: projectPapers.rowCount,
     removedSearchCount: searchRuns.rowCount,
   };
 }
@@ -97,6 +146,7 @@ function paperFilters(input) {
     yearFrom: z.coerce.number().int().min(1900).max(2100).optional(),
     yearTo: z.coerce.number().int().min(1900).max(2100).optional(),
     journal: z.string().trim().max(300).optional(),
+    projectId: z.union([z.string().uuid(), z.literal("unassigned")]).optional(),
     limit: z.coerce.number().int().min(1).max(1000).default(100),
   }), input);
 }
@@ -227,40 +277,38 @@ async function saveMessage(userId, roomId, role, content, citations = []) {
   return result.rows[0];
 }
 
-async function saveSearchRun(userId, input, papers, papersByYear) {
-  return transaction(async (client) => {
-    const runResult = await client.query(
-      `INSERT INTO search_runs
-        (user_id,query,year_from,year_to,max_results,status,result_count,stored_count,
-         request_params,started_at,completed_at)
-       VALUES ($1,$2,$3,$4,$5,'completed',$6,$6,$7::jsonb,now(),now()) RETURNING id`,
-      [userId, input.keyword, input.yearFrom, input.yearTo, input.maxCount, papers.length,
-        JSON.stringify({ sort: "pub date", source: "pubmed", papersByYear })]
+export async function recordSearchRun(client, userId, input, papers, papersByYear) {
+  const runResult = await client.query(
+    `INSERT INTO search_runs
+      (user_id,query,year_from,year_to,max_results,status,result_count,stored_count,
+       request_params,started_at,completed_at)
+     VALUES ($1,$2,$3,$4,$5,'completed',$6,$6,$7::jsonb,now(),now()) RETURNING id`,
+    [userId, input.keyword, input.yearFrom, input.yearTo, input.maxCount, papers.length,
+      JSON.stringify({ sort: "pub date", source: "pubmed", papersByYear })]
+  );
+  const runId = runResult.rows[0].id;
+  for (const [rank, paper] of papers.entries()) {
+    await client.query(
+      `INSERT INTO search_run_papers(search_run_id,user_id,pmid,result_rank,added_to_collection)
+       VALUES($1,$2,$3,$4,false)`,
+      [runId, userId, paper.pmid, rank + 1]
     );
-    const runId = runResult.rows[0].id;
-    let savedCount = 0;
-    if (input.saveToCollection && papers.length) {
-      const saved = await client.query(
-        `INSERT INTO user_paper_collections(user_id,pmid,first_search_run_id)
-         SELECT $1,unnest($2::text[]),$3
-         ON CONFLICT(user_id,pmid) DO UPDATE
-         SET is_del=false,deleted_at=NULL,deleted_by=NULL,
-             first_search_run_id=EXCLUDED.first_search_run_id,saved_at=now()
-         WHERE user_paper_collections.is_del=true
-         RETURNING pmid`,
-        [userId, papers.map((paper) => paper.pmid), runId]
-      );
-      savedCount = saved.rowCount;
-    }
-    for (const [rank, paper] of papers.entries()) {
-      await client.query(
-        `INSERT INTO search_run_papers(search_run_id,user_id,pmid,result_rank,added_to_collection)
-         VALUES($1,$2,$3,$4,$5)`,
-        [runId, userId, paper.pmid, rank + 1, input.saveToCollection]
-      );
-    }
-    return { runId, savedCount };
-  });
+  }
+  return { runId, savedCount: 0 };
+}
+
+async function saveSearchRun(userId, input, papers, papersByYear) {
+  return transaction((client) => recordSearchRun(client, userId, input, papers, papersByYear));
+}
+
+async function activeCollectionPmids(userId, pmids) {
+  if (!pmids.length) return new Set();
+  const result = await query(
+    `SELECT pmid FROM user_paper_collections
+     WHERE user_id=$1 AND pmid=ANY($2::text[]) AND is_del=false`,
+    [userId, pmids],
+  );
+  return new Set(result.rows.map((row) => String(row.pmid)));
 }
 
 export function createApp({ authMiddleware = requireUser } = {}) {
@@ -304,11 +352,15 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     ]);
     await upsertPapers(papers);
     const saved = await saveSearchRun(req.user.id, input, papers, papersByYear);
+    const savedPmids = await activeCollectionPmids(req.user.id, papers.map((paper) => paper.pmid));
     res.json({
-      papers,
+      papers: papers.map((paper) => ({
+        ...paper,
+        isSaved: savedPmids.has(String(paper.pmid)),
+      })),
       papersByYear,
       total: papers.length,
-      savedCount: saved.savedCount,
+      savedCount: 0,
       searchRunId: saved.runId,
     });
   }));
@@ -316,9 +368,9 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   app.post("/api/collection", asyncRoute(async (req, res) => {
     const input = parse(z.object({
       pmids: z.array(z.string().regex(/^\d+$/)).min(1).max(100),
-      keyword: z.string().trim().max(120).optional().default(""),
+      searchRunId: z.string().uuid().optional().nullable(),
     }), req.body);
-    const savedPmids = await addToCollection(req.user.id, input.pmids, input.keyword);
+    const savedPmids = await addToCollection(req.user.id, input.pmids, input.searchRunId);
     res.json({ savedPmids, savedCount: savedPmids.length });
   }));
 
@@ -329,13 +381,58 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 
   app.delete("/api/collection/:pmid", asyncRoute(async (req, res) => {
     const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
-    const result = await query(
-      `UPDATE user_paper_collections
-       SET is_del=true,deleted_at=now(),deleted_by=$1
-       WHERE user_id=$1 AND pmid=$2 AND is_del=false RETURNING pmid`,
-      [req.user.id, pmid]
+    const removed = await removeFromCollection(req.user.id, pmid);
+    res.json({ removed, pmid });
+  }));
+
+  app.get("/api/projects", asyncRoute(async (req, res) => {
+    res.json(await listProjects(req.user.id));
+  }));
+
+  app.post("/api/projects", asyncRoute(async (req, res) => {
+    const input = parse(projectCreateSchema, req.body);
+    const project = await createProject(req.user.id, input);
+    res.status(201).json({ project });
+  }));
+
+  app.patch("/api/projects/:projectId", asyncRoute(async (req, res) => {
+    const projectId = parse(projectIdSchema, req.params.projectId);
+    const input = parse(projectUpdateSchema, req.body);
+    const project = await updateProject(req.user.id, projectId, input);
+    res.json({ project });
+  }));
+
+  app.delete("/api/projects/:projectId", asyncRoute(async (req, res) => {
+    const projectId = parse(projectIdSchema, req.params.projectId);
+    const project = await softDeleteProject(req.user.id, projectId);
+    if (!project) return res.status(404).json({ error: "프로젝트를 찾을 수 없습니다." });
+    return res.json({ project, removed: true });
+  }));
+
+  app.post("/api/projects/:projectId/restore", asyncRoute(async (req, res) => {
+    const projectId = parse(projectIdSchema, req.params.projectId);
+    const project = await restoreProject(req.user.id, projectId);
+    res.json({ project, restored: true });
+  }));
+
+  app.put("/api/papers/:pmid/projects", asyncRoute(async (req, res) => {
+    const pmid = parse(z.string().regex(/^\d+$/), req.params.pmid);
+    const input = parse(z.object({
+      projectIds: z.array(z.string().uuid()).max(100).default([]),
+    }), req.body);
+    const projects = await replacePaperProjects(req.user.id, pmid, input.projectIds);
+    res.json({ pmid, projects });
+  }));
+
+  app.put("/api/papers/projects", asyncRoute(async (req, res) => {
+    const input = parse(bulkPaperProjectSchema, req.body);
+    const papers = await assignPapersToProjects(
+      req.user.id,
+      input.pmids,
+      input.projectIds,
+      input.mode,
     );
-    res.json({ removed: Boolean(result.rowCount), pmid });
+    res.json({ papers, updatedCount: papers.length, mode: input.mode });
   }));
 
   app.get("/api/papers", asyncRoute(async (req, res) => {
@@ -345,6 +442,16 @@ export function createApp({ authMiddleware = requireUser } = {}) {
     }
     const papers = await listPapers(req.user.id, filters);
     res.json({ papers, total: papers.length });
+  }));
+
+  app.get("/api/wordcloud", asyncRoute(async (req, res) => {
+    const { limit: _paperLimit, ...filters } = paperFilters(req.query);
+    if (filters.yearFrom && filters.yearTo && filters.yearFrom > filters.yearTo) {
+      return res.status(400).json({ error: "yearFrom must be <= yearTo" });
+    }
+    const termLimit = parse(wordCloudTermLimitSchema, req.query.termLimit);
+    const summary = await getInterestWordCloud(req.user.id, filters, { limit: termLimit });
+    res.json(summary);
   }));
 
   app.get("/api/papers/filters", asyncRoute(async (req, res) => {
