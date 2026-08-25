@@ -274,9 +274,12 @@ export default function Dashboard({ session, preview = false }) {
 
   useEffect(() => {
     if (preview) return undefined;
-    Promise.allSettled([loadOverview(), loadPapers(), loadInterestWordCloud(), loadProjects(), loadConversations()]);
+    // The overview does not need the heavier interest-paper tools. Loading
+    // those only when the tab opens keeps an optional feature failure from
+    // masking the main dashboard and avoids unnecessary keyword aggregation.
+    Promise.allSettled([loadOverview(), loadConversations()]);
     return undefined;
-  }, [loadOverview, loadPapers, loadInterestWordCloud, loadProjects, loadConversations, preview]);
+  }, [loadOverview, loadConversations, preview]);
 
   useEffect(() => {
     if (!preview) return undefined;

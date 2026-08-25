@@ -20,7 +20,13 @@ export async function api(path, { token, headers, ...options } = {}) {
     },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(detailMessage(body.detail || body.error || body.message));
+  if (!response.ok) {
+    const detail = body.detail || body.error || body.message;
+    if (!detail && response.status === 404) {
+      throw new Error("서버 기능을 찾지 못했습니다. 화면을 새로고침한 뒤 다시 시도해주세요.");
+    }
+    throw new Error(detailMessage(detail));
+  }
   return body;
 }
 

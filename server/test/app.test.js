@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import request from "supertest";
 import {
   bestEvidenceQuote,
+  API_REVISION,
   contextSources,
   createApp,
   evidenceScope,
@@ -16,6 +17,10 @@ const fakeAuth = (req, _res, next) => {
   req.user = { id: fakeAuthUserId, email: "test@example.com" };
   next();
 };
+
+test("exposes a deployment revision for API bundle verification", () => {
+  assert.equal(API_REVISION, "2026-08-25-project-wordcloud-v2");
+});
 
 test("returns authenticated user contract", async () => {
   const response = await request(createApp({ authMiddleware: fakeAuth })).get("/api/auth/me");

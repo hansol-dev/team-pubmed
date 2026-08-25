@@ -28,6 +28,8 @@ import {
 import { countPubMedByYear, searchPubMed } from "./pubmed.js";
 import { getInterestWordCloud } from "./wordCloud.js";
 
+export const API_REVISION = "2026-08-25-project-wordcloud-v2";
+
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const parse = (schema, value) => schema.parse(value);
 const searchSchema = z.object({
@@ -338,7 +340,7 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 
   app.get("/api/health", asyncRoute(async (_req, res) => {
     await query("SELECT 1");
-    res.json({ status: "ok" });
+    res.json({ status: "ok", revision: API_REVISION });
   }));
   app.use("/api", authMiddleware);
 
