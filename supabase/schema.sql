@@ -324,6 +324,7 @@ create table if not exists public.user_paper_collections (
   is_del boolean not null default false,
   deleted_at timestamptz,
   deleted_by uuid,
+  delete_reason text,
   primary key (user_id, pmid),
   constraint user_paper_collections_first_search_fk
     foreign key (first_search_run_id, user_id)
@@ -334,12 +335,98 @@ create table if not exists public.user_paper_collections (
 alter table public.user_paper_collections
   add column if not exists is_del boolean not null default false,
   add column if not exists deleted_at timestamptz,
-  add column if not exists deleted_by uuid;
+  add column if not exists deleted_by uuid,
+  add column if not exists delete_reason text;
 
 create index if not exists user_paper_collections_saved_idx
   on public.user_paper_collections (user_id, saved_at desc);
 create index if not exists user_paper_collections_pmid_idx
   on public.user_paper_collections (pmid);
+create index if not exists user_paper_collections_active_saved_idx
+  on public.user_paper_collections (user_id, saved_at desc)
+  where not is_del;
+
+-- User-owned research projects organize one interest paper into zero, one or
+-- many independent workspaces without copying shared metadata or embeddings.
+create table if not exists public.research_projects (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.user_profiles(id) on delete restrict,
+  name text not null,
+  description text not null default '',
+  color text not null default '#7c6ee6',
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  is_del boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid,
+  delete_reason text,
+  constraint research_projects_owner_key unique (id, user_id),
+  constraint research_projects_name_not_blank check (btrim(name) <> ''),
+  constraint research_projects_name_length check (char_length(name) <= 80),
+  constraint research_projects_description_length check (char_length(description) <= 500),
+  constraint research_projects_color_hex check (color ~ '^#[0-9A-Fa-f]{6}$')
+);
+
+alter table public.research_projects
+  add column if not exists description text not null default '',
+  add column if not exists color text not null default '#7c6ee6',
+  add column if not exists sort_order integer not null default 0,
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid,
+  add column if not exists delete_reason text;
+
+create unique index if not exists research_projects_active_name_uidx
+  on public.research_projects (user_id, lower(btrim(name)))
+  where not is_del;
+create index if not exists research_projects_user_order_idx
+  on public.research_projects (user_id, sort_order, created_at)
+  where not is_del;
+
+drop trigger if exists set_research_projects_updated_at on public.research_projects;
+create trigger set_research_projects_updated_at
+  before update on public.research_projects
+  for each row execute function public.set_updated_at();
+
+create table if not exists public.project_papers (
+  user_id uuid not null,
+  project_id uuid not null,
+  pmid text not null,
+  added_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  is_del boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid,
+  delete_reason text,
+  primary key (user_id, project_id, pmid),
+  constraint project_papers_project_owner_fk
+    foreign key (project_id, user_id)
+    references public.research_projects(id, user_id)
+    on delete restrict,
+  constraint project_papers_owned_paper_fk
+    foreign key (user_id, pmid)
+    references public.user_paper_collections(user_id, pmid)
+    on delete restrict
+);
+
+alter table public.project_papers
+  add column if not exists is_del boolean not null default false,
+  add column if not exists deleted_at timestamptz,
+  add column if not exists deleted_by uuid,
+  add column if not exists delete_reason text;
+
+create index if not exists project_papers_project_active_idx
+  on public.project_papers (user_id, project_id, added_at desc)
+  where not is_del;
+create index if not exists project_papers_pmid_active_idx
+  on public.project_papers (user_id, pmid)
+  where not is_del;
+
+drop trigger if exists set_project_papers_updated_at on public.project_papers;
+create trigger set_project_papers_updated_at
+  before update on public.project_papers
+  for each row execute function public.set_updated_at();
 
 create table if not exists public.chat_rooms (
   id uuid primary key default gen_random_uuid(),
@@ -694,6 +781,8 @@ alter table public.pubmed_records enable row level security;
 alter table public.search_runs enable row level security;
 alter table public.search_run_papers enable row level security;
 alter table public.user_paper_collections enable row level security;
+alter table public.research_projects enable row level security;
+alter table public.project_papers enable row level security;
 alter table public.chat_rooms enable row level security;
 alter table public.chat_room_papers enable row level security;
 alter table public.chat_messages enable row level security;
@@ -771,10 +860,56 @@ create policy "collections_update_own"
 
 drop policy if exists "collections_delete_own"
   on public.user_paper_collections;
-create policy "collections_delete_own"
-  on public.user_paper_collections for delete
+-- Interest papers are removed only through an UPDATE that records is_del,
+-- deleted_at, deleted_by and delete_reason. No physical-delete policy exists.
+
+drop policy if exists "research_projects_select_own"
+  on public.research_projects;
+create policy "research_projects_select_own"
+  on public.research_projects for select
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (user_id = (select auth.uid()) and not is_del);
+
+drop policy if exists "research_projects_insert_own"
+  on public.research_projects;
+create policy "research_projects_insert_own"
+  on public.research_projects for insert
+  to authenticated
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "research_projects_update_own"
+  on public.research_projects;
+create policy "research_projects_update_own"
+  on public.research_projects for update
+  to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "project_papers_select_own"
+  on public.project_papers;
+create policy "project_papers_select_own"
+  on public.project_papers for select
+  to authenticated
+  using (user_id = (select auth.uid()) and not is_del);
+
+drop policy if exists "project_papers_insert_own"
+  on public.project_papers;
+create policy "project_papers_insert_own"
+  on public.project_papers for insert
+  to authenticated
+  with check (user_id = (select auth.uid()));
+
+drop policy if exists "project_papers_update_own"
+  on public.project_papers;
+create policy "project_papers_update_own"
+  on public.project_papers for update
+  to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
+
+-- Project and project-paper removal is always an UPDATE-based soft delete.
+drop policy if exists "research_projects_delete_own" on public.research_projects;
+drop policy if exists "project_papers_delete_own" on public.project_papers;
 
 drop policy if exists "chat_rooms_own_all" on public.chat_rooms;
 create policy "chat_rooms_own_all"
@@ -929,13 +1064,16 @@ grant execute on function public.match_chat_room_chunks(
 grant select on public.pubmed_records to authenticated;
 grant select, insert, update on public.user_profiles to authenticated;
 revoke delete on public.search_runs, public.search_run_papers,
-  public.user_paper_collections, public.chat_rooms,
+  public.user_paper_collections, public.research_projects,
+  public.project_papers, public.chat_rooms,
   public.chat_room_papers, public.chat_messages
 from authenticated;
 grant select, insert, update on public.search_runs to authenticated;
 grant select, insert, update on public.search_run_papers to authenticated;
 grant select, insert, update
   on public.user_paper_collections to authenticated;
+grant select, insert, update on public.research_projects to authenticated;
+grant select, insert, update on public.project_papers to authenticated;
 grant select, insert, update on public.chat_rooms to authenticated;
 grant select, insert, update on public.chat_room_papers to authenticated;
 grant select, insert, update on public.chat_messages to authenticated;
@@ -952,6 +1090,8 @@ grant all on table
   public.search_runs,
   public.search_run_papers,
   public.user_paper_collections,
+  public.research_projects,
+  public.project_papers,
   public.chat_rooms,
   public.chat_room_papers,
   public.chat_messages,

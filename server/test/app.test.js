@@ -7,6 +7,7 @@ import {
   createApp,
   evidenceScope,
   fillYearRange,
+  recordSearchRun,
   resetUserWorkspace,
 } from "../src/app.js";
 
@@ -28,6 +29,48 @@ test("validates collection search input before external calls", async () => {
     .send({ keyword: "", yearFrom: 2025, yearTo: 2024 });
   assert.equal(response.status, 400);
   assert.equal(response.body.error, "Invalid request");
+});
+
+test("rejects legacy search requests that try to auto-save every result", async () => {
+  const response = await request(createApp({ authMiddleware: fakeAuth }))
+    .post("/api/collection/search")
+    .send({
+      keyword: "diabetes",
+      yearFrom: 2020,
+      yearTo: 2024,
+      maxCount: 10,
+      saveToCollection: true,
+    });
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, "Invalid request");
+});
+
+test("records search results without inserting them into the interest collection", async () => {
+  const calls = [];
+  const client = {
+    query: async (text, params) => {
+      calls.push({ text, params });
+      if (/INSERT INTO search_runs/.test(text)) {
+        return { rowCount: 1, rows: [{ id: "22222222-2222-4222-8222-222222222222" }] };
+      }
+      return { rowCount: 1, rows: [] };
+    },
+  };
+  const result = await recordSearchRun(
+    client,
+    fakeAuthUserId,
+    { keyword: "diabetes", yearFrom: 2020, yearTo: 2024, maxCount: 2 },
+    [{ pmid: "123" }, { pmid: "456" }],
+    { 2024: 2 },
+  );
+
+  assert.deepEqual(result, {
+    runId: "22222222-2222-4222-8222-222222222222",
+    savedCount: 0,
+  });
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every(({ text }) => !/user_paper_collections/.test(text)));
+  assert.ok(calls.slice(1).every(({ text }) => /added_to_collection/.test(text) && /false/.test(text)));
 });
 
 test("allows the Vercel deployment's same-origin API requests", async () => {
@@ -120,7 +163,7 @@ test("describes full-text, mixed and abstract-only evidence scopes", () => {
 
 test("resets chats, collected papers and search history for one user", async () => {
   const calls = [];
-  const rowCounts = [8, 2, 10, 3];
+  const rowCounts = [8, 2, 4, 2, 10, 3];
   const client = {
     query: async (text, params) => {
       calls.push({ text, params });
@@ -133,6 +176,8 @@ test("resets chats, collected papers and search history for one user", async () 
     removedChatCount: 2,
     removedMessageCount: 8,
     removedPaperCount: 10,
+    removedProjectCount: 2,
+    removedProjectPaperCount: 4,
     removedSearchCount: 3,
   });
   assert.deepEqual(calls.map(({ params }) => params), [
@@ -140,11 +185,16 @@ test("resets chats, collected papers and search history for one user", async () 
     [fakeAuthUserId],
     [fakeAuthUserId],
     [fakeAuthUserId],
+    [fakeAuthUserId],
+    [fakeAuthUserId],
   ]);
   assert.match(calls[0].text, /UPDATE chat_messages/);
   assert.match(calls[1].text, /UPDATE chat_rooms/);
-  assert.match(calls[2].text, /UPDATE user_paper_collections/);
-  assert.match(calls[3].text, /UPDATE search_runs/);
+  assert.match(calls[2].text, /UPDATE project_papers/);
+  assert.match(calls[3].text, /UPDATE research_projects/);
+  assert.match(calls[4].text, /UPDATE user_paper_collections/);
+  assert.match(calls[4].text, /delete_reason='workspace_reset'/);
+  assert.match(calls[5].text, /UPDATE search_runs/);
   assert.ok(calls.every(({ text }) => /is_del=true/.test(text)));
   assert.ok(calls.every(({ text }) => !/DELETE FROM/.test(text)));
 });

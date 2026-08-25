@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import KeywordCloud from "./KeywordCloud";
 import { api, apiUrl, stream } from "../lib/api";
 import { extractPdfSections, loadPdfDocument } from "../lib/pdf";
 import { supabase } from "../lib/supabase";
+import { paperHasKeyword } from "../lib/wordCloud";
 
 const INTRO = "선택한 논문을 바탕으로 무엇이 궁금한가요?";
 const emptyOverview = { totalPapers: 0, totalJournals: 0, topJournals: [], papersByYear: {} };
@@ -31,6 +33,32 @@ const previewOverview = {
   },
 };
 
+let chromeTranslatorPromise = null;
+
+function getChromeEnglishToKoreanTranslator(onProgress) {
+  const TranslatorApi = globalThis.Translator;
+  if (!TranslatorApi?.create) {
+    throw new Error("CHROME_TRANSLATOR_UNAVAILABLE");
+  }
+
+  if (!chromeTranslatorPromise) {
+    chromeTranslatorPromise = TranslatorApi.create({
+      sourceLanguage: "en",
+      targetLanguage: "ko",
+      monitor(monitor) {
+        monitor.addEventListener("downloadprogress", (event) => {
+          onProgress?.(Math.round(event.loaded * 100));
+        });
+      },
+    }).catch((error) => {
+      chromeTranslatorPromise = null;
+      throw error;
+    });
+  }
+
+  return chromeTranslatorPromise;
+}
+
 const normalizePaper = (paper) => ({
   ...paper,
   id: paper.id ?? paper.paper_id ?? paper.pmid,
@@ -43,7 +71,18 @@ const normalizePaper = (paper) => ({
   uploadedPdfName: paper.uploadedPdfName ?? paper.uploaded_pdf_name,
   pmcid: paper.pmcid ?? paper.pmc_id,
   documentStatus: paper.documentStatus ?? paper.document_status ?? paper.rag_status,
+  isSaved: paper.isSaved ?? paper.is_saved ?? false,
+  projects: Array.isArray(paper.projects) ? paper.projects : [],
 });
+
+const emptyProjectSummary = { projects: [], totalCount: 0, unassignedCount: 0 };
+const emptyKeywordSummary = {
+  scope: "interest",
+  projectId: "all",
+  paperCount: 0,
+  missingAbstractCount: 0,
+  terms: [],
+};
 
 const hasFullTextEvidence = (paper) => paper?.documentStatus === "ready";
 
@@ -89,6 +128,16 @@ function normalizeOverview(body = {}) {
     totalJournals: stats.totalJournals ?? stats.total_journals ?? 0,
     topJournals: stats.topJournals ?? stats.top_journals ?? [],
     papersByYear: stats.papersByYear ?? stats.papers_by_year ?? stats.latestTrend?.papers_by_year ?? {},
+  };
+}
+
+function normalizeKeywordSummary(body = {}) {
+  return {
+    scope: body.scope ?? "interest",
+    projectId: body.projectId ?? body.project_id ?? "all",
+    paperCount: Number(body.paperCount ?? body.paper_count ?? 0),
+    missingAbstractCount: Number(body.missingAbstractCount ?? body.missing_abstract_count ?? 0),
+    terms: Array.isArray(body.terms) ? body.terms : [],
   };
 }
 
@@ -146,9 +195,18 @@ export default function Dashboard({ session, preview = false }) {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [overview, setOverview] = useState(preview ? previewOverview : emptyOverview);
-  const [collectionStats, setCollectionStats] = useState(preview ? { added: 186, skipped: 32 } : { added: 0, skipped: 0 });
+  const [lastSearchCount, setLastSearchCount] = useState(preview ? 186 : 0);
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchSelected, setSearchSelected] = useState([]);
+  const [searchRunId, setSearchRunId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [interestPending, setInterestPending] = useState({});
   const [papers, setPapers] = useState([]);
   const [paperTotal, setPaperTotal] = useState(0);
+  const [paperProjectFilter, setPaperProjectFilter] = useState("all");
+  const [projectSummary, setProjectSummary] = useState(emptyProjectSummary);
+  const [interestKeywordSummary, setInterestKeywordSummary] = useState(emptyKeywordSummary);
+  const [recentlyDeletedProject, setRecentlyDeletedProject] = useState(null);
   const [selected, setSelected] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -182,6 +240,33 @@ export default function Dashboard({ session, preview = false }) {
     setPaperTotal(result.total);
   }, [call]);
 
+  const loadProjects = useCallback(async () => {
+    const body = await call("/api/projects");
+    setProjectSummary({
+      projects: body.projects ?? [],
+      totalCount: Number(body.totalCount ?? body.total_count ?? 0),
+      unassignedCount: Number(body.unassignedCount ?? body.unassigned_count ?? 0),
+    });
+  }, [call]);
+
+  const loadInterestWordCloud = useCallback(async (params = "") => {
+    const body = await call(`/api/wordcloud${params ? `?${params}` : ""}`);
+    setInterestKeywordSummary(normalizeKeywordSummary(body));
+  }, [call]);
+
+  const loadPapersByProject = useCallback(async (projectId = paperProjectFilter, params = "") => {
+    const query = new URLSearchParams(params);
+    if (projectId && projectId !== "all") query.set("projectId", projectId);
+    setPaperProjectFilter(projectId || "all");
+    await Promise.all([loadPapers(query.toString()), loadInterestWordCloud(query.toString())]);
+  }, [loadInterestWordCloud, loadPapers, paperProjectFilter]);
+
+  const loadPaperListByProject = useCallback(async (projectId = paperProjectFilter, params = "") => {
+    const query = new URLSearchParams(params);
+    if (projectId && projectId !== "all") query.set("projectId", projectId);
+    await loadPapers(query.toString());
+  }, [loadPapers, paperProjectFilter]);
+
   const loadConversations = useCallback(async () => {
     const body = await call("/api/chat/conversations");
     setConversations(body.conversations ?? body.items ?? body.data ?? (Array.isArray(body) ? body : []));
@@ -189,9 +274,9 @@ export default function Dashboard({ session, preview = false }) {
 
   useEffect(() => {
     if (preview) return undefined;
-    Promise.allSettled([loadOverview(), loadPapers(), loadConversations()]);
+    Promise.allSettled([loadOverview(), loadPapers(), loadInterestWordCloud(), loadProjects(), loadConversations()]);
     return undefined;
-  }, [loadOverview, loadPapers, loadConversations, preview]);
+  }, [loadOverview, loadPapers, loadInterestWordCloud, loadProjects, loadConversations, preview]);
 
   useEffect(() => {
     if (!preview) return undefined;
@@ -203,7 +288,7 @@ export default function Dashboard({ session, preview = false }) {
     setTab(next);
     setMobileSheet(false);
     if (next === "overview") loadOverview().catch(() => {});
-    if (next === "papers") loadPapers().catch(() => {});
+    if (next === "papers") Promise.allSettled([loadPapersByProject(), loadProjects()]);
     if (next === "chat") loadConversations().catch(() => {});
   };
 
@@ -219,15 +304,18 @@ export default function Dashboard({ session, preview = false }) {
           yearFrom: Number(values.yearFrom),
           yearTo: Number(values.yearTo),
           maxCount: Number(values.maxResults),
-          saveToCollection: true,
         }),
       });
-      const added = result.savedCount ?? 0;
-      const skipped = Math.max(0, (result.total ?? result.papers?.length ?? 0) - added);
-      setCollectionStats({ added, skipped });
-      setStatus(`수집 완료 · 신규 ${added}건, 중복 ${skipped}건`);
+      const found = result.total ?? result.papers?.length ?? 0;
+      setSearchResults((result.papers ?? []).map(normalizePaper));
+      setSearchSelected([]);
+      setSearchRunId(result.searchRunId ?? result.search_run_id ?? null);
+      setSearchQuery(values.keyword.trim());
+      setLastSearchCount(found);
+      setStatus(`검색 완료 · ${found}건을 찾았습니다. 관심 논문은 직접 추가해주세요.`);
+      setTab("search");
       setMobileSheet(false);
-      await Promise.all([loadOverview(), loadPapers()]);
+      await loadOverview();
     } catch (requestError) {
       setStatus(requestError.message);
     }
@@ -236,23 +324,31 @@ export default function Dashboard({ session, preview = false }) {
   const resetCollection = async () => {
     if (preview) return;
     const confirmed = window.confirm(
-      "현재 계정의 수집 논문과 모든 채팅을 초기화할까요?\n검색 이력과 개요 그래프도 함께 삭제되며, 이 작업은 되돌릴 수 없습니다.",
+      "현재 계정의 관심 논문과 모든 채팅을 초기화할까요?\n검색 이력과 개요 그래프도 함께 화면에서 제외됩니다.",
     );
     if (!confirmed) return;
-    setStatus("수집 데이터와 채팅을 초기화하고 있어요…");
+    setStatus("관심 논문과 채팅을 초기화하고 있어요…");
     try {
       const result = await call("/api/collection", { method: "DELETE" });
       setOverview(emptyOverview);
       setPapers([]);
       setPaperTotal(0);
+      setPaperProjectFilter("all");
+      setProjectSummary(emptyProjectSummary);
+      setInterestKeywordSummary(emptyKeywordSummary);
+      setRecentlyDeletedProject(null);
       setSelected([]);
       setConversations([]);
       setConversationId(null);
       setMessages([]);
-      setCollectionStats({ added: 0, skipped: 0 });
+      setLastSearchCount(0);
+      setSearchResults([]);
+      setSearchSelected([]);
+      setSearchRunId(null);
+      setSearchQuery("");
       setMobileSheet(false);
       setStatus(
-        `논문 ${Number(result.removedPaperCount ?? 0).toLocaleString()}건과 채팅 `
+        `관심 논문 ${Number(result.removedPaperCount ?? 0).toLocaleString()}건과 채팅 `
         + `${Number(result.removedChatCount ?? 0).toLocaleString()}개를 초기화했습니다.`,
       );
     } catch (requestError) {
@@ -260,25 +356,212 @@ export default function Dashboard({ session, preview = false }) {
     }
   };
 
-  const search = async (event) => {
+  const search = async (event, projectId = paperProjectFilter) => {
     event.preventDefault();
+    setSelected([]);
     const params = new URLSearchParams();
-    for (const [key, value] of new FormData(event.currentTarget)) {
-      if (String(value).trim()) params.set(key, String(value).trim());
+    const formData = new FormData(event.currentTarget);
+    for (const [key, value] of formData) {
+      if (key !== "projectId" && String(value).trim()) params.set(key, String(value).trim());
     }
-    await loadPapers(params.toString()).catch(() => {});
+    const selectedProjectId = formData.get("projectId") || projectId;
+    await loadPapersByProject(String(selectedProjectId), params.toString()).catch(() => {});
   };
 
   const togglePaper = (paper) => {
     const key = String(paper.id);
     setSelected((current) => {
       if (current.some((item) => String(item.id) === key)) return current.filter((item) => String(item.id) !== key);
-      if (current.length >= 5) {
-        setError("챗봇에는 논문을 최대 5편까지 보낼 수 있습니다.");
-        return current;
-      }
       return [...current, paper];
     });
+  };
+
+  const selectPapers = (targetPapers, checked) => {
+    const targetIds = new Set(targetPapers.map((paper) => String(paper.id)));
+    setSelected((current) => {
+      if (!checked) return current.filter((paper) => !targetIds.has(String(paper.id)));
+      const next = new Map(current.map((paper) => [String(paper.id), paper]));
+      for (const paper of targetPapers) next.set(String(paper.id), paper);
+      return [...next.values()];
+    });
+  };
+
+  const setInterestBusy = (pmid, busy) => {
+    setInterestPending((current) => {
+      const next = { ...current };
+      if (busy) next[String(pmid)] = true;
+      else delete next[String(pmid)];
+      return next;
+    });
+  };
+
+  const setInterestPapersBusy = (pmids, busy) => {
+    setInterestPending((current) => {
+      const next = { ...current };
+      for (const pmid of pmids) {
+        if (busy) next[String(pmid)] = true;
+        else delete next[String(pmid)];
+      }
+      return next;
+    });
+  };
+
+  const markSearchResultsSaved = (pmids, isSaved) => {
+    const keys = new Set(pmids.map(String));
+    setSearchResults((current) => current.map((paper) =>
+      keys.has(String(paper.pmid)) ? { ...paper, isSaved } : paper));
+    if (isSaved) {
+      setSearchSelected((current) => current.filter((pmid) => !keys.has(String(pmid))));
+    }
+  };
+
+  const saveInterestPapers = async (targetPapers) => {
+    const unique = [...new Map(
+      targetPapers
+        .filter((paper) => paper?.pmid && !paper.isSaved && !interestPending[String(paper.pmid)])
+        .map((paper) => [String(paper.pmid), paper]),
+    ).values()];
+    if (!unique.length) return false;
+    const pmids = unique.map((paper) => String(paper.pmid));
+    setInterestPapersBusy(pmids, true);
+    try {
+      await call("/api/collection", {
+        method: "POST",
+        body: JSON.stringify({
+          pmids,
+          ...(searchRunId ? { searchRunId } : {}),
+        }),
+      });
+      markSearchResultsSaved(pmids, true);
+      setStatus(unique.length === 1
+        ? `관심 논문에 추가했습니다 · PMID ${pmids[0]}`
+        : `선택한 논문 ${unique.length}편을 관심 논문에 추가했습니다.`);
+      await Promise.all([loadOverview(), loadPapersByProject(), loadProjects()]);
+      return true;
+    } catch (requestError) {
+      setStatus(requestError.message);
+      return false;
+    } finally {
+      setInterestPapersBusy(pmids, false);
+    }
+  };
+
+  const saveInterestPaper = (paper) => saveInterestPapers([paper]);
+
+  const toggleSearchSelection = (paper) => {
+    if (!paper?.pmid || paper.isSaved || interestPending[String(paper.pmid)]) return;
+    const key = String(paper.pmid);
+    setSearchSelected((current) => current.includes(key)
+      ? current.filter((pmid) => pmid !== key)
+      : [...current, key]);
+  };
+
+  const saveSelectedInterestPapers = () => {
+    const selectedKeys = new Set(searchSelected);
+    return saveInterestPapers(searchResults.filter((paper) => selectedKeys.has(String(paper.pmid))));
+  };
+
+  const removeInterestPaper = async (paper) => {
+    if (!paper?.pmid || interestPending[String(paper.pmid)]) return;
+    setInterestBusy(paper.pmid, true);
+    try {
+      await call(`/api/collection/${encodeURIComponent(paper.pmid)}`, { method: "DELETE" });
+      markSearchResultsSaved([paper.pmid], false);
+      setPapers((current) => current.filter((item) => String(item.pmid) !== String(paper.pmid)));
+      setSelected((current) => current.filter((item) => String(item.pmid) !== String(paper.pmid)));
+      setStatus(`관심 논문에서 해제했습니다 · PMID ${paper.pmid}`);
+      await Promise.all([loadOverview(), loadPapersByProject(), loadProjects()]);
+    } catch (requestError) {
+      setStatus(requestError.message);
+    } finally {
+      setInterestBusy(paper.pmid, false);
+    }
+  };
+
+  const toggleSearchInterest = (paper) => (
+    paper.isSaved ? removeInterestPaper(paper) : saveInterestPaper(paper)
+  );
+
+  const createResearchProject = async (input) => {
+    const body = await call("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    setRecentlyDeletedProject(null);
+    await loadProjects();
+    setStatus(`프로젝트를 만들었습니다 · ${body.project.name}`);
+    return body.project;
+  };
+
+  const updateResearchProject = async (projectId, input) => {
+    const body = await call(`/api/projects/${encodeURIComponent(projectId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+    await Promise.all([loadProjects(), loadPapersByProject()]);
+    setStatus(`프로젝트를 수정했습니다 · ${body.project.name}`);
+    return body.project;
+  };
+
+  const deleteResearchProject = async (project) => {
+    const body = await call(`/api/projects/${encodeURIComponent(project.id)}`, { method: "DELETE" });
+    setRecentlyDeletedProject({ ...project, ...body.project });
+    setPaperProjectFilter("all");
+    await Promise.all([loadProjects(), loadPapersByProject("all")]);
+    setStatus(`프로젝트를 보관 처리했습니다 · ${project.name}`);
+  };
+
+  const restoreResearchProject = async () => {
+    if (!recentlyDeletedProject?.id) return;
+    const body = await call(`/api/projects/${encodeURIComponent(recentlyDeletedProject.id)}/restore`, {
+      method: "POST",
+    });
+    setRecentlyDeletedProject(null);
+    await Promise.all([loadProjects(), loadPapersByProject("all")]);
+    setStatus(`프로젝트와 논문 분류를 복구했습니다 · ${body.project.name}`);
+  };
+
+  const replacePaperProjects = async (paper, projectIds) => {
+    const body = await call(`/api/papers/${encodeURIComponent(paper.pmid)}/projects`, {
+      method: "PUT",
+      body: JSON.stringify({ projectIds }),
+    });
+    const nextProjects = body.projects ?? [];
+    const staysVisible = paperProjectFilter === "all"
+      || (paperProjectFilter === "unassigned" && nextProjects.length === 0)
+      || nextProjects.some((project) => String(project.id) === String(paperProjectFilter));
+    setPapers((current) => current
+      .map((item) => String(item.pmid) === String(paper.pmid)
+        ? { ...item, projects: nextProjects }
+        : item)
+      .filter((item) => String(item.pmid) !== String(paper.pmid) || staysVisible));
+    setPaperTotal((current) => staysVisible ? current : Math.max(0, current - 1));
+    setSelected((current) => current.map((item) => String(item.pmid) === String(paper.pmid)
+      ? { ...item, projects: nextProjects }
+      : item));
+    await Promise.all([loadProjects(), loadInterestWordCloud(
+      paperProjectFilter === "all" ? "" : `projectId=${encodeURIComponent(paperProjectFilter)}`,
+    )]);
+    setStatus(nextProjects.length
+      ? `논문을 ${nextProjects.length}개 프로젝트에 분류했습니다 · PMID ${paper.pmid}`
+      : `논문을 미분류로 옮겼습니다 · PMID ${paper.pmid}`);
+    return nextProjects;
+  };
+
+  const assignSelectedPapersToProjects = async (targetPapers, projectIds, mode) => {
+    const pmids = [...new Set(targetPapers.map((paper) => String(paper.pmid)).filter(Boolean))];
+    const body = await call("/api/papers/projects", {
+      method: "PUT",
+      body: JSON.stringify({ pmids, projectIds, mode }),
+    });
+    setSelected([]);
+    await Promise.all([loadPapersByProject(), loadProjects()]);
+    setStatus(mode === "add"
+      ? `선택한 논문 ${body.updatedCount}편에 프로젝트를 추가했습니다.`
+      : projectIds.length
+        ? `선택한 논문 ${body.updatedCount}편의 프로젝트 분류를 교체했습니다.`
+        : `선택한 논문 ${body.updatedCount}편을 미분류로 옮겼습니다.`);
+    return body.papers ?? [];
   };
 
   const uploadPaperPdf = async (paper, file) => {
@@ -375,6 +658,10 @@ export default function Dashboard({ session, preview = false }) {
 
   const sendSelectedToChat = async () => {
     if (!selected.length) return;
+    if (selected.length > 5) {
+      setError("챗봇에는 선택한 논문 중 최대 5편까지만 보낼 수 있습니다.");
+      return;
+    }
     const result = await call("/api/chat/conversations/from-papers", {
       method: "POST",
       body: JSON.stringify({ pmids: selected.map((paper) => paper.pmid) }),
@@ -417,17 +704,18 @@ export default function Dashboard({ session, preview = false }) {
           {sidebarCollapsed ? "›" : "‹"}
         </button>
       )}
-      <button className={`mobile-collect-trigger ${tab !== "overview" ? "is-hidden" : ""}`} type="button" onClick={() => setMobileSheet(true)}><span>＋</span> 논문 수집</button>
-      <button className="mobile-sheet-backdrop" type="button" aria-label="논문 수집 창 닫기" onClick={() => setMobileSheet(false)} />
+      <button className={`mobile-collect-trigger ${tab !== "overview" ? "is-hidden" : ""}`} type="button" onClick={() => setMobileSheet(true)}><span>⌕</span> 논문 검색</button>
+      <button className="mobile-sheet-backdrop" type="button" aria-label="논문 검색 창 닫기" onClick={() => setMobileSheet(false)} />
       <section className="content">
         <header className="page-header">
-          <div><p className="eyebrow">RESEARCH COMPANION</p><h1><span className="desktop-title">PubMed 논문을 <em>검색하고 분석하세요.</em></span><span className="mobile-title">PubMed 논문 검색·분석</span></h1></div>
+          <div><h1><span className="desktop-title">PubMed 논문을 <em>검색하고 분석하세요.</em></span><span className="mobile-title">PubMed 논문 검색·분석</span></h1></div>
           <div className="user-menu"><span className="profile-dot">{displayName.slice(0, 1)}</span><span>{displayName}</span><button type="button" className="text-button" onClick={logout}>로그아웃</button></div>
         </header>
         <nav className="tabs" aria-label="주요 메뉴">
           {[
             ["overview", "개요"],
-            ["papers", "논문 목록"],
+            ["search", "검색 결과"],
+            ["papers", "관심 논문"],
             ["chat", "AI 챗봇"],
           ].map(([name, label]) => (
             <button key={name} className={`tab ${tab === name ? "is-active" : ""}`} onClick={() => selectTab(name)}>
@@ -439,8 +727,59 @@ export default function Dashboard({ session, preview = false }) {
           </button>
         </nav>
         {error && <div className="app-error" role="alert"><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
-        <Overview active={tab === "overview"} stats={overview} collectionStats={collectionStats} />
-        <Papers active={tab === "papers"} papers={papers} total={paperTotal} selected={selected} onToggle={togglePaper} onSearch={search} onChat={sendSelectedToChat} onUploadPdf={uploadPaperPdf} pdfUploadState={pdfUploadState} />
+        <Overview
+          active={tab === "overview"}
+          stats={overview}
+          searchStats={{
+            found: lastSearchCount,
+            interested: preview ? 32 : searchResults.filter((paper) => paper.isSaved).length,
+          }}
+        />
+        <SearchResults
+          active={tab === "search"}
+          papers={searchResults}
+          query={searchQuery}
+          selectedPmids={searchSelected}
+          onToggleSelection={toggleSearchSelection}
+          onSelectAll={setSearchSelected}
+          onSaveSelected={saveSelectedInterestPapers}
+          onInterestToggle={toggleSearchInterest}
+          interestPending={interestPending}
+        />
+        <Papers
+          active={tab === "papers"}
+          papers={papers}
+          total={paperTotal}
+          selected={selected}
+          projects={projectSummary.projects}
+          projectTotal={projectSummary.totalCount}
+          unassignedCount={projectSummary.unassignedCount}
+          keywordSummary={interestKeywordSummary}
+          activeProjectId={paperProjectFilter}
+          recentlyDeletedProject={recentlyDeletedProject}
+          onToggle={togglePaper}
+          onSearch={search}
+          onProjectFilter={(projectId, params = "") => {
+            setSelected([]);
+            return loadPapersByProject(projectId, params);
+          }}
+          onKeywordFilter={(projectId, params = "") => {
+            setSelected([]);
+            return loadPaperListByProject(projectId, params);
+          }}
+          onCreateProject={createResearchProject}
+          onUpdateProject={updateResearchProject}
+          onDeleteProject={deleteResearchProject}
+          onRestoreProject={restoreResearchProject}
+          onAssignProjects={replacePaperProjects}
+          onBulkAssignProjects={assignSelectedPapersToProjects}
+          onSelectPapers={selectPapers}
+          onChat={sendSelectedToChat}
+          onUploadPdf={uploadPaperPdf}
+          onRemoveInterest={removeInterestPaper}
+          interestPending={interestPending}
+          pdfUploadState={pdfUploadState}
+        />
         <Chat active={tab === "chat"} token={token} conversations={conversations} conversationId={conversationId} selectedCount={selected.length} messages={messages} setMessages={setMessages} onOpen={openConversation} onNewChat={createEmptyChat} onDeleteConversation={deleteConversation} onResetSelection={resetChatSelection} onUploadPdf={uploadPaperPdf} pdfUploadState={pdfUploadState} call={call} />
       </section>
       {loading > 0 && <div className="loading-indicator is-visible" role="status"><div className="loading-panel"><span className="loading-spinner" /><p>데이터를 불러오는 중입니다.</p></div></div>}
@@ -460,29 +799,29 @@ function Sidebar({ onCollect, onReset, status, onClose }) {
           <div><label htmlFor="collect-from">시작 연도</label><input id="collect-from" name="yearFrom" type="number" min="1900" max="2100" defaultValue="2020" required /></div>
           <div><label htmlFor="collect-to">종료 연도</label><input id="collect-to" name="yearTo" type="number" min="1900" max="2100" defaultValue={new Date().getFullYear()} required /></div>
         </div>
-        <label htmlFor="collect-max">최대 수집 건수</label><input id="collect-max" name="maxResults" type="number" min="1" max="100" defaultValue="50" required />
-        <button className="primary-button collect-action" type="submit"><span>＋</span> 논문 수집하기</button>
-        <button className="reset-button collect-action" type="button" onClick={onReset}><span aria-hidden="true">↺</span> 수집 데이터 및 채팅 초기화</button>
+        <label htmlFor="collect-max">최대 검색 건수</label><input id="collect-max" name="maxResults" type="number" min="1" max="100" defaultValue="50" required />
+        <button className="primary-button collect-action" type="submit"><span>⌕</span> PubMed 검색하기</button>
+        <button className="reset-button collect-action" type="button" onClick={onReset}><span aria-hidden="true">↺</span> 관심 논문 및 채팅 초기화</button>
         <p className="form-status" role="status">{status}</p>
       </form>
-      <div className="sidebar-note"><span>✦</span> PubMed 논문 기반 탐색 도구입니다.</div>
+      <div className="sidebar-note"><span>✦</span> 검색 결과는 자동으로 관심 논문에 저장되지 않습니다.</div>
     </aside>
   );
 }
 
-function Overview({ active, stats, collectionStats }) {
+function Overview({ active, stats, searchStats }) {
   const yearEntries = Object.entries(stats.papersByYear);
   return (
     <section id="overview" className={`tab-panel ${active ? "is-active" : ""}`}>
       <div className="metric-grid">
-        <Metric tone="purple" icon="⌘" label="전체 논문" value={stats.totalPapers} note="저장된 논문 수" />
-        <Metric tone="mint" icon="＋" label="이번 수집 신규" value={collectionStats.added} note="새로 추가된 논문" />
-        <Metric tone="peach" icon="↷" label="중복 스킵" value={collectionStats.skipped} note="PMID 기준" />
+        <Metric tone="purple" icon="⌘" label="관심 논문" value={stats.totalPapers} note="직접 등록한 논문" />
+        <Metric tone="mint" icon="⌕" label="이번 검색 결과" value={searchStats.found} note="PubMed 검색 결과" />
+        <Metric tone="peach" icon="☆" label="검색 결과 중 관심" value={searchStats.interested} note="현재 관심 등록된 논문" />
         <Metric tone="blue" icon="▤" label="저널 수" value={stats.totalJournals} note="분석 대상 저널" />
       </div>
       <div className="chart-grid">
         <ChartCard eyebrow="PUBLICATION TREND" title="PubMed 검색 결과 수(연도별)"><Trend entries={yearEntries} /></ChartCard>
-        <ChartCard eyebrow="COLLECTED DISTRIBUTION" title="수집 논문 상위 저널"><Bars entries={stats.topJournals} /></ChartCard>
+        <ChartCard eyebrow="INTEREST DISTRIBUTION" title="관심 논문 상위 저널"><Bars entries={stats.topJournals} /></ChartCard>
       </div>
     </section>
   );
@@ -495,21 +834,146 @@ function ChartCard({ eyebrow, title, children }) {
   return <article className="chart-card clay-card"><div className="card-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div></div>{children}</article>;
 }
 function Trend({ entries }) {
-  if (!entries.length) return <div className="chart-empty"><span>✦</span><p>수집 후 연도별 검색 결과가 표시됩니다.</p></div>;
+  if (!entries.length) return <div className="chart-empty"><span>✦</span><p>검색 후 연도별 결과가 표시됩니다.</p></div>;
   const max = Math.max(...entries.map(([, value]) => Number(value)), 1);
   return <div className="trend-chart" style={{ "--trend-count": entries.length }}>{entries.map(([year, value]) => <div className="trend-column" key={year}><div className="trend-track" style={{ "--bar-height": `${Math.max(5, Math.round(Number(value) / max * 100))}%` }}><strong>{Number(value).toLocaleString()}</strong><span /></div><small>{year}</small></div>)}</div>;
 }
 function Bars({ entries }) {
   const normalized = entries.map((item) => Array.isArray(item) ? item : [item.journal ?? item.label, item.count ?? item.value]);
-  if (!normalized.length) return <div className="chart-empty"><span>✦</span><p>저장된 논문이 없으면 주요 저널이 표시되지 않습니다.</p></div>;
+  if (!normalized.length) return <div className="chart-empty"><span>✦</span><p>관심 논문이 없으면 주요 저널이 표시되지 않습니다.</p></div>;
   const max = Math.max(...normalized.map(([, value]) => Number(value)), 1);
   return <div className="bar-chart">{normalized.map(([label, value]) => <div className="bar-row" key={label}><div className="bar-label">{label}</div><div className="bar-track"><span className="bar-fill mint" style={{ width: `${Math.max(5, Number(value) / max * 100)}%` }} /></div><strong>{value}</strong></div>)}</div>;
 }
 
-function Papers({ active, papers, total, selected, onToggle, onSearch, onChat, onUploadPdf, pdfUploadState }) {
+function SearchResults({ active, papers, query, selectedPmids, onToggleSelection, onSelectAll, onSaveSelected, onInterestToggle, interestPending }) {
+  const [activeKeyword, setActiveKeyword] = useState(null);
+  const selectedSet = useMemo(() => new Set(selectedPmids.map(String)), [selectedPmids]);
+  const visiblePapers = useMemo(() => papers.filter((paper) => paperHasKeyword(paper, activeKeyword)), [papers, activeKeyword]);
+  const selectablePmids = useMemo(() => visiblePapers
+    .filter((paper) => !paper.isSaved && !interestPending[String(paper.pmid)])
+    .map((paper) => String(paper.pmid)), [visiblePapers, interestPending]);
+  const selectedCount = selectablePmids.filter((pmid) => selectedSet.has(pmid)).length;
+  const totalSelectedCount = papers.filter((paper) => !paper.isSaved && selectedSet.has(String(paper.pmid))).length;
+  const allSelected = selectablePmids.length > 0 && selectedCount === selectablePmids.length;
+
+  useEffect(() => setActiveKeyword(null), [query]);
+
+  return (
+    <section id="search" className={`tab-panel ${active ? "is-active" : ""}`}>
+      <article className="clay-card table-card metadata-card">
+        <div className="card-heading paper-card-heading">
+          <div className="search-heading-copy">
+            <p className="eyebrow">SEARCH RESULTS</p>
+            <div className="search-title-row">
+              <h2>{query ? `“${query}” 검색 결과` : "검색 결과"}</h2>
+              <p className="search-result-notice">
+                <span aria-hidden="true">i</span>
+                검색 결과는 관심 논문에 자동 저장되지 않습니다. 보관할 논문만 직접 추가해주세요.
+              </p>
+            </div>
+          </div>
+          <div className="search-heading-actions">
+            <p className="result-summary collection-count">{activeKeyword ? <><strong>{visiblePapers.length}</strong>/{papers.length}건 표시</> : <>총 <strong>{papers.length}</strong>건</>}</p>
+            <button
+              className="bulk-interest-button"
+              type="button"
+              disabled={!totalSelectedCount}
+              onClick={onSaveSelected}
+            >
+              <span aria-hidden="true">★</span> 선택 {totalSelectedCount}편 관심 논문 추가
+            </button>
+          </div>
+        </div>
+        <KeywordCloud papers={papers} scope="search" activeKeyword={activeKeyword} onKeywordSelect={setActiveKeyword} />
+        {papers.length > 0 && (
+          <div className="search-selection-toolbar">
+            <label>
+              <input
+                type="checkbox"
+                checked={allSelected}
+                disabled={!selectablePmids.length}
+                onChange={() => onSelectAll(allSelected ? [] : selectablePmids)}
+              />
+              {activeKeyword ? "필터 결과의 미등록 논문 전체 선택" : "미등록 논문 전체 선택"}
+            </label>
+            <strong>{totalSelectedCount}편 선택</strong>
+          </div>
+        )}
+        {!papers.length
+          ? <p className="result-summary">왼쪽 검색창에서 키워드와 연도를 입력해 논문을 검색하세요.</p>
+          : <div className="paper-list">{visiblePapers.map((paper) => (
+            <PaperCard
+              key={paper.id}
+              paper={paper}
+              checked={selectedSet.has(String(paper.pmid))}
+              onToggle={() => onToggleSelection(paper)}
+              selectionDisabled={paper.isSaved || Boolean(interestPending[String(paper.pmid)])}
+              selectionTitle={paper.isSaved ? "이미 관심 논문에 등록됨" : "관심 논문으로 추가할 논문 선택"}
+              interestSaved={paper.isSaved}
+              onInterestToggle={() => onInterestToggle(paper)}
+              interestBusy={Boolean(interestPending[String(paper.pmid)])}
+            />
+          ))}</div>}
+      </article>
+    </section>
+  );
+}
+
+function ProjectFolderIcon() {
+  return (
+    <svg className="project-folder-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d="M2.75 5.5c0-.97.78-1.75 1.75-1.75h2.7l1.55 1.6h6.75c.97 0 1.75.78 1.75 1.75v7.4c0 .97-.78 1.75-1.75 1.75h-11A1.75 1.75 0 0 1 2.75 14.5v-9Z" />
+      <path d="M3.15 8h13.7" />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg className="control-chevron" viewBox="0 0 12 8" aria-hidden="true" focusable="false">
+      <path d="m1.5 1.5 4.5 4 4.5-4" />
+    </svg>
+  );
+}
+
+function Papers({
+  active,
+  papers,
+  total,
+  selected,
+  projects,
+  projectTotal,
+  unassignedCount,
+  keywordSummary = emptyKeywordSummary,
+  activeProjectId,
+  recentlyDeletedProject,
+  onToggle,
+  onSearch,
+  onProjectFilter,
+  onKeywordFilter,
+  onCreateProject,
+  onUpdateProject,
+  onDeleteProject,
+  onRestoreProject,
+  onAssignProjects,
+  onBulkAssignProjects,
+  onSelectPapers,
+  onChat,
+  onUploadPdf,
+  onRemoveInterest,
+  interestPending,
+  pdfUploadState,
+}) {
   const [sortMethod, setSortMethod] = useState("newest");
   const [evidenceFilter, setEvidenceFilter] = useState("all");
+  const [activeKeyword, setActiveKeyword] = useState(null);
+  const [projectEditor, setProjectEditor] = useState(null);
+  const [assignmentPaper, setAssignmentPaper] = useState(null);
+  const [bulkAssignmentOpen, setBulkAssignmentOpen] = useState(false);
+  const [searchFiltersOpen, setSearchFiltersOpen] = useState(false);
+  const filterFormRef = useRef(null);
   const selectedIds = useMemo(() => new Set(selected.map((paper) => String(paper.id))), [selected]);
+  const activeProject = projects.find((project) => String(project.id) === String(activeProjectId));
   const sortedPapers = useMemo(() => [...papers].sort((left, right) => {
     if (sortMethod === "oldest") {
       return (Number(left.pubYear) || 9999) - (Number(right.pubYear) || 9999) ||
@@ -529,35 +993,298 @@ function Papers({ active, papers, total, selected, onToggle, onSearch, onChat, o
     if (evidenceFilter === "abstract") return !hasFullTextEvidence(paper);
     return true;
   }), [sortedPapers, evidenceFilter]);
+  const keywordFilteredPapers = useMemo(
+    () => visiblePapers.filter((paper) => paperHasKeyword(paper, activeKeyword)),
+    [visiblePapers, activeKeyword],
+  );
+  const allVisibleSelected = keywordFilteredPapers.length > 0
+    && keywordFilteredPapers.every((paper) => selectedIds.has(String(paper.id)));
+
   const download = () => {
-    const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...visiblePapers.map((p) => [p.pmid, p.title, p.abstract, p.journal, p.pubYear, p.authors])];
+    const rows = [["PMID", "Title", "Abstract", "Journal", "Year", "Authors"], ...keywordFilteredPapers.map((p) => [p.pmid, p.title, p.abstract, p.journal, p.pubYear, p.authors])];
     const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
     const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" })); link.download = "publium-pubmed-metadata.csv"; link.click(); URL.revokeObjectURL(link.href);
+  };
+  const currentFilterParams = () => {
+    const params = new URLSearchParams();
+    if (filterFormRef.current) {
+      for (const [key, value] of new FormData(filterFormRef.current)) {
+        if (String(value).trim()) params.set(key, String(value).trim());
+      }
+    }
+    return params;
+  };
+  const changeProjectFilter = (projectId) => {
+    setActiveKeyword(null);
+    const params = currentFilterParams();
+    onProjectFilter(projectId, params.toString()).catch(() => {});
+  };
+  const changeKeywordFilter = (keyword) => {
+    setActiveKeyword(keyword);
+    const params = currentFilterParams();
+    if (keyword) params.set("keyword", keyword);
+    onKeywordFilter(activeProjectId, params.toString()).catch(() => {});
+  };
+  const removeProject = async () => {
+    if (!activeProject) return;
+    const confirmed = window.confirm(
+      `“${activeProject.name}” 프로젝트를 보관 처리할까요?\n관심 논문 자체는 삭제되지 않으며, 바로 복구할 수 있습니다.`,
+    );
+    if (!confirmed) return;
+    await onDeleteProject(activeProject).catch(() => {});
   };
   return (
     <section id="papers" className={`tab-panel ${active ? "is-active" : ""}`}>
       <article className="clay-card table-card metadata-card">
         <div className="card-heading paper-card-heading">
-          <div><p className="eyebrow">COLLECTED RECORDS</p><h2>논문 수집 목록</h2></div>
+          <div><p className="eyebrow">INTEREST PAPERS</p><h2>관심 논문 목록</h2></div>
           <div className="paper-heading-actions">
             <button className="secondary-button" type="button" onClick={download}>↓ CSV 다운로드</button>
-            <button className="secondary-button chat-send-button" type="button" disabled={!selected.length} onClick={onChat}>선택 {selected.length}/5편 챗봇으로 보내기 <span>→</span></button>
+            <button className="secondary-button chat-send-button" type="button" disabled={!selected.length || selected.length > 5} onClick={onChat} title={selected.length > 5 ? "챗봇에는 최대 5편까지 보낼 수 있습니다." : "선택 논문을 챗봇으로 보내기"}>{selected.length > 5 ? `챗봇은 최대 5편 · 현재 ${selected.length}편` : `선택 ${selected.length}/5편 챗봇으로 보내기`} <span>→</span></button>
           </div>
         </div>
-        <form className="filter-bar" onSubmit={onSearch}><input name="keyword" placeholder="제목·초록·수집 검색어 검색" /><input name="yearFrom" type="number" placeholder="시작 연도" /><input name="yearTo" type="number" placeholder="종료 연도" /><input name="journal" placeholder="저널명" /><button className="primary-button">검색</button></form>
         <div className="selection-toolbar">
-          <label className="paper-sort evidence-filter" aria-label="논문 근거 범위"><select value={evidenceFilter} onChange={(event) => setEvidenceFilter(event.target.value)}><option value="all">전체 논문</option><option value="full">전문 분석 가능</option><option value="abstract">초록 기반</option></select></label>
-          <label className="paper-sort" aria-label="논문 정렬 방법"><select value={sortMethod} onChange={(event) => setSortMethod(event.target.value)}><option value="newest">최신 논문순</option><option value="oldest">오래된 논문순</option><option value="collected">최근 수집순</option><option value="title">제목순</option></select></label>
-          <p className="result-summary collection-count">총 <strong>{evidenceFilter === "all" ? total : visiblePapers.length}</strong>건</p>
+          <div className="interest-toolbar-row is-research-tools">
+            <span className="toolbar-section-label">연구</span>
+            <div className="interest-toolbar-main">
+              <label className="paper-sort project-paper-filter" aria-label="프로젝트별 필터">
+                <span>프로젝트</span>
+                <select value={activeProjectId} onChange={(event) => changeProjectFilter(event.target.value)}>
+                  <option value="all">전체 · {projectTotal}편</option>
+                  {projects.map((project) => <option value={project.id} key={project.id}>{project.name} · {project.paper_count ?? 0}편</option>)}
+                  <option value="unassigned">미분류 · {unassignedCount}편</option>
+                </select>
+              </label>
+              {activeProject && <button type="button" className="project-action" onClick={() => setProjectEditor(activeProject)}>수정</button>}
+              {activeProject && <button type="button" className="project-action is-danger" onClick={removeProject}>삭제</button>}
+              <button type="button" className="project-create-button" onClick={() => setProjectEditor({})}><span aria-hidden="true">＋</span> 프로젝트</button>
+              <KeywordCloud
+                compact
+                papers={papers}
+                terms={keywordSummary.terms}
+                paperCount={keywordSummary.paperCount}
+                missingAbstractCount={keywordSummary.missingAbstractCount}
+                scope="interest"
+                activeKeyword={activeKeyword}
+                onKeywordSelect={changeKeywordFilter}
+              />
+              <button className={`paper-search-toggle is-compact ${searchFiltersOpen ? "is-active" : ""}`} type="button" aria-expanded={searchFiltersOpen} aria-controls="interest-paper-search-form" onClick={() => setSearchFiltersOpen((value) => !value)}>
+                <span aria-hidden="true">⌕</span><strong>논문 검색</strong><ChevronIcon />
+              </button>
+            </div>
+          </div>
+          <div className="interest-toolbar-row is-list-tools">
+            <span className="toolbar-section-label">목록</span>
+            <div className="paper-bulk-selection">
+              <label className="paper-select-all">
+                <input type="checkbox" checked={allVisibleSelected} disabled={!keywordFilteredPapers.length} onChange={() => onSelectPapers(keywordFilteredPapers, !allVisibleSelected)} />
+                현재 목록 전체 선택
+              </label>
+              <button className="bulk-project-button" type="button" disabled={!selected.length} onClick={() => setBulkAssignmentOpen(true)}><ProjectFolderIcon /> 선택 {selected.length}편 프로젝트 분류</button>
+              {selected.length > 0 && <button className="paper-selection-clear" type="button" onClick={() => onSelectPapers(selected, false)}>선택 해제</button>}
+            </div>
+            <div className="paper-list-controls">
+              <label className="paper-sort evidence-filter" aria-label="논문 근거 범위"><select value={evidenceFilter} onChange={(event) => setEvidenceFilter(event.target.value)}><option value="all">전체 논문</option><option value="full">전문 분석 가능</option><option value="abstract">초록 기반</option></select></label>
+              <label className="paper-sort" aria-label="논문 정렬 방법"><select value={sortMethod} onChange={(event) => setSortMethod(event.target.value)}><option value="newest">최신 논문순</option><option value="oldest">오래된 논문순</option><option value="collected">최근 관심 등록순</option><option value="title">제목순</option></select></label>
+              <p className="result-summary collection-count">{activeKeyword ? <><strong>{keywordFilteredPapers.length}</strong>/{evidenceFilter === "all" ? total : visiblePapers.length}건 표시</> : <>총 <strong>{evidenceFilter === "all" ? total : visiblePapers.length}</strong>건</>}</p>
+            </div>
+          </div>
         </div>
-        {!visiblePapers.length ? <p className="result-summary">조건에 맞는 논문이 없습니다.</p> : <div className="paper-list">{visiblePapers.map((paper) => <PaperCard key={paper.id} paper={paper} checked={selectedIds.has(String(paper.id))} onToggle={() => onToggle(paper)} onUploadPdf={onUploadPdf} uploadStage={pdfUploadState[String(paper.pmid)]} />)}</div>}
+        <form id="interest-paper-search-form" ref={filterFormRef} className={`filter-bar paper-search-form ${searchFiltersOpen ? "is-open" : ""}`} onSubmit={(event) => {
+          setActiveKeyword(null);
+          onSearch(event, activeProjectId);
+        }}>
+          <input name="keyword" placeholder="관심 논문의 제목·초록 검색" />
+          <input name="yearFrom" type="number" placeholder="시작 연도" />
+          <input name="yearTo" type="number" placeholder="종료 연도" />
+          <input name="journal" placeholder="저널명" />
+          <button className="primary-button">검색</button>
+        </form>
+        {recentlyDeletedProject && (
+          <div className="project-undo" role="status">
+            <span>“{recentlyDeletedProject.name}” 프로젝트를 보관 처리했습니다. 논문은 그대로 유지됩니다.</span>
+            <button type="button" onClick={() => onRestoreProject().catch(() => {})}>되돌리기</button>
+          </div>
+        )}
+        {!keywordFilteredPapers.length ? <p className="result-summary">조건에 맞는 관심 논문이 없습니다.</p> : <div className="paper-list">{keywordFilteredPapers.map((paper) => <PaperCard key={paper.id} paper={paper} checked={selectedIds.has(String(paper.id))} onToggle={() => onToggle(paper)} onUploadPdf={onUploadPdf} uploadStage={pdfUploadState[String(paper.pmid)]} interestSaved onInterestToggle={() => onRemoveInterest(paper)} interestBusy={Boolean(interestPending[String(paper.pmid)])} onManageProjects={() => setAssignmentPaper(paper)} />)}</div>}
       </article>
+      {projectEditor && (
+        <ProjectEditorDialog
+          project={projectEditor.id ? projectEditor : null}
+          onClose={() => setProjectEditor(null)}
+          onSubmit={(input) => projectEditor.id
+            ? onUpdateProject(projectEditor.id, input)
+            : onCreateProject(input)}
+        />
+      )}
+      {assignmentPaper && (
+        <PaperProjectDialog
+          paper={assignmentPaper}
+          projects={projects}
+          onClose={() => setAssignmentPaper(null)}
+          onSave={(projectIds) => onAssignProjects(assignmentPaper, projectIds)}
+        />
+      )}
+      {bulkAssignmentOpen && (
+        <BulkPaperProjectDialog
+          papers={selected}
+          projects={projects}
+          onClose={() => setBulkAssignmentOpen(false)}
+          onSave={(projectIds, mode) => onBulkAssignProjects(selected, projectIds, mode)}
+        />
+      )}
     </section>
   );
 }
 
-function PaperCard({ paper, checked, onToggle, onUploadPdf, uploadStage }) {
+function ProjectEditorDialog({ project, onClose, onSubmit }) {
+  const [name, setName] = useState(project?.name ?? "");
+  const [description, setDescription] = useState(project?.description ?? "");
+  const [color, setColor] = useState(project?.color ?? "#7c6ee6");
+  const [busy, setBusy] = useState(false);
+  const colors = ["#7c6ee6", "#5c87d9", "#3f9f8d", "#dc8d5d", "#c26982", "#727b96"];
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onSubmit({ name: name.trim(), description: description.trim(), color });
+      onClose();
+    } catch {
+      // The shared app error banner reports request failures.
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title" onSubmit={submit}>
+        <header>
+          <div><p className="eyebrow">RESEARCH PROJECT</p><h2 id="project-dialog-title">{project ? "프로젝트 수정" : "새 프로젝트 만들기"}</h2></div>
+          <button type="button" className="project-dialog-close" onClick={onClose} aria-label="닫기">×</button>
+        </header>
+        <label>프로젝트 이름<input autoFocus value={name} maxLength={80} required placeholder="예: 당뇨병 예측 모델" onChange={(event) => setName(event.target.value)} /></label>
+        <label>설명 <span>선택</span><textarea value={description} maxLength={500} rows={3} placeholder="연구 목적이나 분류 기준을 짧게 적어두세요." onChange={(event) => setDescription(event.target.value)} /></label>
+        <fieldset className="project-color-picker">
+          <legend>구분 색상</legend>
+          <div>{colors.map((value) => <button className={color === value ? "is-selected" : ""} style={{ "--swatch": value }} type="button" key={value} aria-label={`${value} 색상`} aria-pressed={color === value} onClick={() => setColor(value)} />)}</div>
+        </fieldset>
+        <footer><button type="button" className="secondary-button" onClick={onClose}>취소</button><button type="submit" className="primary-button" disabled={busy || !name.trim()}>{busy ? "저장 중…" : project ? "변경 저장" : "프로젝트 만들기"}</button></footer>
+      </form>
+    </div>
+  );
+}
+
+function PaperProjectDialog({ paper, projects, onClose, onSave }) {
+  const [selectedIds, setSelectedIds] = useState(() => new Set((paper.projects ?? []).map((project) => String(project.id))));
+  const [busy, setBusy] = useState(false);
+  const toggle = (projectId) => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (next.has(String(projectId))) next.delete(String(projectId));
+    else next.add(String(projectId));
+    return next;
+  });
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await onSave([...selectedIds]);
+      onClose();
+    } catch {
+      // The shared app error banner reports request failures.
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="project-dialog paper-project-dialog" role="dialog" aria-modal="true" aria-labelledby="paper-project-dialog-title" onSubmit={submit}>
+        <header>
+          <div><p className="eyebrow">ORGANIZE PAPER</p><h2 id="paper-project-dialog-title">논문 프로젝트 분류</h2></div>
+          <button type="button" className="project-dialog-close" onClick={onClose} aria-label="닫기">×</button>
+        </header>
+        <div className="paper-project-dialog-title"><span>PMID {paper.pmid}</span><strong>{paper.title}</strong></div>
+        {!projects.length ? <div className="project-empty"><ProjectFolderIcon /><strong>아직 만든 프로젝트가 없습니다.</strong><p>창을 닫고 ‘새 프로젝트’를 먼저 만들어주세요.</p></div> : (
+          <div className="project-check-list">{projects.map((project) => (
+            <label key={project.id}>
+              <input type="checkbox" checked={selectedIds.has(String(project.id))} onChange={() => toggle(project.id)} />
+              <i style={{ "--project-color": project.color }} aria-hidden="true" />
+              <span><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}</span>
+              <em>{project.paper_count ?? 0}편</em>
+            </label>
+          ))}</div>
+        )}
+        <p className="project-dialog-help">여러 프로젝트를 동시에 선택할 수 있습니다. 아무것도 선택하지 않으면 미분류로 이동합니다.</p>
+        <footer><button type="button" className="secondary-button" onClick={onClose}>취소</button><button type="submit" className="primary-button" disabled={busy}>{busy ? "저장 중…" : "분류 저장"}</button></footer>
+      </form>
+    </div>
+  );
+}
+
+function BulkPaperProjectDialog({ papers, projects, onClose, onSave }) {
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [mode, setMode] = useState("add");
+  const [busy, setBusy] = useState(false);
+  const toggle = (projectId) => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (next.has(String(projectId))) next.delete(String(projectId));
+    else next.add(String(projectId));
+    return next;
+  });
+  const submit = async (event) => {
+    event.preventDefault();
+    if (mode === "add" && !selectedIds.size) return;
+    setBusy(true);
+    try {
+      await onSave([...selectedIds], mode);
+      onClose();
+    } catch {
+      // The shared app error banner reports request failures.
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="project-dialog paper-project-dialog bulk-project-dialog" role="dialog" aria-modal="true" aria-labelledby="bulk-project-dialog-title" onSubmit={submit}>
+        <header>
+          <div><p className="eyebrow">BULK ORGANIZE</p><h2 id="bulk-project-dialog-title">선택 논문 일괄 분류</h2></div>
+          <button type="button" className="project-dialog-close" onClick={onClose} aria-label="닫기">×</button>
+        </header>
+        <p className="bulk-project-count"><strong>{papers.length}편</strong>의 관심 논문에 같은 분류를 적용합니다.</p>
+        <fieldset className="bulk-project-mode">
+          <legend>적용 방식</legend>
+          <label className={mode === "add" ? "is-selected" : ""}>
+            <input type="radio" name="mode" value="add" checked={mode === "add"} onChange={() => setMode("add")} />
+            <span><strong>프로젝트 추가</strong><small>각 논문의 기존 분류는 그대로 유지합니다.</small></span>
+          </label>
+          <label className={mode === "replace" ? "is-selected" : ""}>
+            <input type="radio" name="mode" value="replace" checked={mode === "replace"} onChange={() => setMode("replace")} />
+            <span><strong>프로젝트 교체</strong><small>선택한 프로젝트만 남기고 기존 분류를 해제합니다.</small></span>
+          </label>
+        </fieldset>
+        {!projects.length ? <div className="project-empty"><ProjectFolderIcon /><strong>아직 만든 프로젝트가 없습니다.</strong><p>프로젝트를 만든 뒤 다시 시도해주세요.</p></div> : (
+          <div className="project-check-list">{projects.map((project) => (
+            <label key={project.id}>
+              <input type="checkbox" checked={selectedIds.has(String(project.id))} onChange={() => toggle(project.id)} />
+              <i style={{ "--project-color": project.color }} aria-hidden="true" />
+              <span><strong>{project.name}</strong>{project.description && <small>{project.description}</small>}</span>
+              <em>{project.paper_count ?? 0}편</em>
+            </label>
+          ))}</div>
+        )}
+        {mode === "replace" && !selectedIds.size
+          ? <p className="project-dialog-help is-warning">프로젝트를 선택하지 않고 저장하면 {papers.length}편 모두 미분류로 이동합니다.</p>
+          : <p className="project-dialog-help">여러 프로젝트를 동시에 선택할 수 있습니다.</p>}
+        <footer><button type="button" className="secondary-button" onClick={onClose}>취소</button><button type="submit" className="primary-button" disabled={busy || !papers.length || (mode === "add" && !selectedIds.size)}>{busy ? "적용 중…" : `${papers.length}편에 적용`}</button></footer>
+      </form>
+    </div>
+  );
+}
+
+function PaperCard({ paper, checked = false, onToggle, selectionDisabled = false, selectionTitle = "논문 선택", onUploadPdf, uploadStage, interestSaved, onInterestToggle, interestBusy = false, onManageProjects }) {
   const [abstractExpanded, setAbstractExpanded] = useState(false);
+  const [translation, setTranslation] = useState({ status: "idle", title: "", abstract: "", error: "" });
+  const [showTranslation, setShowTranslation] = useState(false);
   const uploadInputRef = useRef(null);
   const pubmed = paper.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${paper.pmid}/` : null;
   const doi = paper.doi ? `https://doi.org/${paper.doi}` : (!paper.pmcid ? paper.fullTextUrl : null);
@@ -579,24 +1306,91 @@ function PaperCard({ paper, checked, onToggle, onUploadPdf, uploadStage }) {
       event.target.value = "";
     }
   };
+  const translateWithChrome = async () => {
+    if (translation.status === "done") {
+      setShowTranslation((value) => !value);
+      return;
+    }
+
+    setTranslation({ status: "preparing", title: "", abstract: "", error: "" });
+    try {
+      const translatorPromise = getChromeEnglishToKoreanTranslator((progress) => {
+        setTranslation((current) => ({ ...current, status: "downloading", progress }));
+      });
+      const translator = await translatorPromise;
+      setTranslation((current) => ({ ...current, status: "translating" }));
+
+      const title = paper.title ? await translator.translate(paper.title) : "";
+      const abstract = paper.abstract ? await translator.translate(paper.abstract) : "";
+      setTranslation({ status: "done", title, abstract, error: "" });
+      setShowTranslation(true);
+    } catch {
+      chromeTranslatorPromise = null;
+      setTranslation({
+        status: "error",
+        title: "",
+        abstract: "",
+        error: "Chrome 내장 번역을 사용할 수 없습니다. 데스크톱 Chrome 138 이상에서 다시 시도해 주세요.",
+      });
+    }
+  };
+  const translationBusy = ["preparing", "downloading", "translating"].includes(translation.status);
+  const translationLabel = translation.status === "downloading"
+    ? `Chrome 번역 준비 ${translation.progress ?? 0}%`
+    : translationBusy
+      ? "Chrome 번역 중…"
+      : translation.status === "done"
+        ? showTranslation ? "영문 원문 보기" : "한국어 번역 보기"
+        : translation.status === "error" ? "번역 다시 시도" : "한국어 번역";
+  const displayedTitle = showTranslation && translation.title ? translation.title : paper.title;
+  const displayedAbstract = showTranslation && translation.abstract ? translation.abstract : paper.abstract;
   return (
-    <article className={`paper-card ${checked ? "is-selected" : ""}`}>
-      <div className="paper-card-head">
-        <label className="paper-select" aria-label={`${paper.title || "논문"} 선택`} title="챗봇 분석에 선택"><input type="checkbox" checked={checked} onChange={onToggle} /></label>
-        <div><div className="paper-meta"><span className="meta-chip journal-chip">{paper.journal || "저널 정보 없음"}</span><span className="meta-chip">{paper.pubYear || "연도 정보 없음"}</span><span className="pmid-chip">PMID {paper.pmid || "-"}</span><span className={`analysis-chip is-${documentState.mode}`}>{documentState.label}</span></div><h3>{paper.title || "제목 없음"}</h3></div>
+    <article className={`paper-card ${checked ? "is-selected" : ""} ${onToggle ? "" : "is-search-result"}`}>
+      <div className={`paper-card-head ${onToggle ? "" : "no-selection"}`}>
+        {onToggle && <label className={`paper-select ${selectionDisabled ? "is-disabled" : ""}`} aria-label={`${paper.title || "논문"} 선택`} title={selectionTitle}><input type="checkbox" checked={checked} disabled={selectionDisabled} onChange={onToggle} /></label>}
+        <div><div className="paper-meta">{interestSaved && (
+          <div className="paper-project-tags" aria-label="지정된 프로젝트">
+            {(paper.projects ?? []).length
+              ? paper.projects.map((project) => <span key={project.id} style={{ "--project-color": project.color }}><i aria-hidden="true" />{project.name}</span>)
+              : <span className="is-unassigned"><i aria-hidden="true" />미분류</span>}
+          </div>
+        )}<span className="meta-chip journal-chip" title={paper.journal || "저널 정보 없음"}><span>{paper.journal || "저널 정보 없음"}</span></span><span className="meta-chip">{paper.pubYear || "연도 정보 없음"}</span><span className="pmid-chip">PMID {paper.pmid || "-"}</span><span className={`analysis-chip is-${documentState.mode}`}>{documentState.label}</span>{showTranslation && <span className="analysis-chip is-full">Chrome 한국어 번역</span>}</div><h3>{displayedTitle || "제목 없음"}</h3></div>
       </div>
       <p className="paper-author"><strong>저자</strong><span>{Array.isArray(paper.authors) ? paper.authors.join(", ") : paper.authors || "등록된 저자 정보가 없습니다."}</span></p>
-      <div className="abstract-heading"><span>ABSTRACT</span><button className="abstract-toggle" type="button" onClick={() => setAbstractExpanded((value) => !value)} aria-expanded={abstractExpanded}>{abstractExpanded ? "초록 접기 ↑" : "초록 전체 보기 ↓"}</button></div>
-      <p className={`abstract-preview ${abstractExpanded ? "is-expanded" : ""}`}>{paper.abstract || "초록 내용 없음"}</p>
+      <div className="abstract-heading"><span>{showTranslation ? "ABSTRACT · 한국어 번역" : "ABSTRACT"}</span><button className="abstract-toggle" type="button" onClick={() => setAbstractExpanded((value) => !value)} aria-expanded={abstractExpanded}>{abstractExpanded ? "초록 접기 ↑" : "초록 전체 보기 ↓"}</button></div>
+      <p className={`abstract-preview ${abstractExpanded ? "is-expanded" : ""}`}>{displayedAbstract || "초록 내용 없음"}</p>
       <div className="paper-links">
+        {onInterestToggle && (
+          <button
+            className={`interest-button ${interestSaved ? "is-saved" : ""}`}
+            type="button"
+            disabled={interestBusy}
+            aria-pressed={Boolean(interestSaved)}
+            onClick={onInterestToggle}
+          >
+            {interestBusy ? "처리 중…" : interestSaved ? "★ 관심 논문 해제" : "＋ 관심 논문 추가"}
+          </button>
+        )}
+        {onManageProjects && <button className="paper-project-button" type="button" onClick={onManageProjects}><ProjectFolderIcon /> 프로젝트 분류</button>}
+        <button
+          className={`chrome-translate-button ${showTranslation ? "is-active" : ""} ${translationBusy ? "is-loading" : ""}`}
+          type="button"
+          disabled={translationBusy || (!paper.title && !paper.abstract)}
+          aria-pressed={showTranslation}
+          title="Chrome 내장 번역을 사용하며 서버 API를 호출하지 않습니다."
+          onClick={translateWithChrome}
+        >
+          {translationLabel}
+        </button>
         {paper.pdfUrl && <a className="pdf-view-link" href={paper.pdfUrl} target="_blank" rel="noreferrer">PDF 보기</a>}
-        <button className="pdf-upload-button" type="button" disabled={Boolean(uploadStage)} onClick={() => uploadInputRef.current?.click()}>{uploadLabel}</button>
-        <input ref={uploadInputRef} className="visually-hidden" type="file" accept="application/pdf,.pdf" onChange={choosePdf} />
+        {onUploadPdf && <button className="pdf-upload-button" type="button" disabled={Boolean(uploadStage)} onClick={() => uploadInputRef.current?.click()}>{uploadLabel}</button>}
+        {onUploadPdf && <input ref={uploadInputRef} className="visually-hidden" type="file" accept="application/pdf,.pdf" onChange={choosePdf} />}
         {pubmed && <a href={pubmed} target="_blank" rel="noreferrer">PubMed 보기 ↗</a>}
         {doi && <a href={doi} target="_blank" rel="noreferrer">출판사 원문 ↗</a>}
         {pmc && <a className="full-text-link" href={pmc} target="_blank" rel="noreferrer">PMC 무료 원문 ↗</a>}
         {!doi && !pmc && !paper.pdfUrl && <span>초록만 제공</span>}
       </div>
+      {translation.error && <p className="translation-error" role="status">{translation.error}</p>}
     </article>
   );
 }
