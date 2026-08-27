@@ -17,6 +17,7 @@ const emptyOverview = {
   analysisStatus: { ready: 0, abstractOnly: 0, processing: 0 },
   papersByYear: {},
   latestSearch: null,
+  recentPapers: [],
 };
 const previewOverview = {
   totalPapers: 2410,
@@ -46,6 +47,40 @@ const previewOverview = {
     totalMatches: 2477,
     searchedAt: "2026-08-27T00:00:00.000Z",
   },
+  recentPapers: [
+    {
+      pmid: "41287614",
+      title: "Digital health interventions for long-term obesity management: a systematic review",
+      journal: "Journal of Medical Internet Research",
+      pubYear: 2025,
+      savedAt: "2026-08-26T10:30:00.000Z",
+      projects: [{ id: "preview-obesity", name: "비만 중재 연구", color: "#7769cf" }],
+    },
+    {
+      pmid: "41193026",
+      title: "Lifestyle and metabolic risk factors in adults with type 2 diabetes",
+      journal: "Diabetes Care",
+      pubYear: 2025,
+      savedAt: "2026-08-25T08:20:00.000Z",
+      projects: [{ id: "preview-diabetes", name: "당뇨 위험요인", color: "#4d9488" }],
+    },
+    {
+      pmid: "41028471",
+      title: "Patient engagement with mobile health services in primary care",
+      journal: "The Lancet Digital Health",
+      pubYear: 2024,
+      savedAt: "2026-08-24T14:10:00.000Z",
+      projects: [{ id: "preview-digital", name: "디지털 헬스", color: "#cb7a5e" }],
+    },
+    {
+      pmid: "40981033",
+      title: "Evidence synthesis methods for complex clinical interventions",
+      journal: "BMC Medical Research Methodology",
+      pubYear: 2024,
+      savedAt: "2026-08-22T04:45:00.000Z",
+      projects: [],
+    },
+  ],
 };
 
 let chromeTranslatorPromise = null;
@@ -141,6 +176,7 @@ function normalizeOverview(body = {}) {
   const analysis = stats.analysisStatus ?? stats.analysis_status ?? {};
   const latest = stats.latestSearch ?? stats.latest_search ?? null;
   const projects = stats.projectDistribution ?? stats.project_distribution ?? [];
+  const recentPapers = stats.recentPapers ?? stats.recent_papers ?? [];
   return {
     totalPapers: stats.totalPapers ?? stats.total_papers ?? 0,
     totalJournals: stats.totalJournals ?? stats.total_journals ?? 0,
@@ -166,6 +202,14 @@ function normalizeOverview(body = {}) {
       totalMatches: Number(latest.totalMatches ?? latest.total_matches ?? 0),
       searchedAt: latest.searchedAt ?? latest.searched_at ?? null,
     } : null,
+    recentPapers: recentPapers.map((paper) => ({
+      pmid: paper.pmid,
+      title: paper.title ?? "제목 정보 없음",
+      journal: paper.journal ?? "저널 정보 없음",
+      pubYear: Number(paper.pubYear ?? paper.pub_year ?? paper.publication_year ?? 0),
+      savedAt: paper.savedAt ?? paper.saved_at ?? null,
+      projects: Array.isArray(paper.projects) ? paper.projects : [],
+    })),
   };
 }
 
@@ -871,6 +915,15 @@ function Overview({ active, stats, onProjectOpen }) {
           <SearchTrend entries={stats.papersByYear} search={stats.latestSearch} />
         </OverviewCard>
       </div>
+      <div className="overview-continuation-grid">
+        <OverviewCard className="recent-papers-card" eyebrow="RECENTLY SAVED" title="최근 관심 논문">
+          <button className="overview-card-action" type="button" onClick={() => onProjectOpen("all")}>관심 논문 보기 <span aria-hidden="true">→</span></button>
+          <RecentPapers papers={stats.recentPapers} onProjectOpen={onProjectOpen} />
+        </OverviewCard>
+        <OverviewCard className="next-actions-card" eyebrow="NEXT ACTIONS" title="지금 이어서 할 일">
+          <NextActions stats={stats} onProjectOpen={onProjectOpen} />
+        </OverviewCard>
+      </div>
     </section>
   );
 }
@@ -883,6 +936,58 @@ function Metric({ tone, icon, label, value, note, onClick }) {
   const content = <><span className={`metric-icon ${tone}`}>{icon}</span><p>{label}</p><strong>{Number(value ?? 0).toLocaleString()}</strong><small>{note}</small>{onClick && <span className="metric-card-arrow" aria-hidden="true">→</span>}</>;
   if (onClick) return <button className="metric-card clay-card is-actionable" type="button" onClick={onClick}>{content}</button>;
   return <article className="metric-card clay-card">{content}</article>;
+}
+
+function formatOverviewDate(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ko-KR", { month: "short", day: "numeric" }).format(date);
+}
+
+function RecentPapers({ papers = [], onProjectOpen }) {
+  if (!papers.length) return <div className="overview-empty recent-empty"><span aria-hidden="true">★</span><strong>최근 저장한 논문이 없습니다.</strong><p>검색 결과에서 관심 논문을 추가하면 여기에 바로 표시됩니다.</p></div>;
+  return <ul className="recent-paper-list">{papers.map((paper, index) => {
+    const project = paper.projects?.[0];
+    const extraProjectCount = Math.max(0, (paper.projects?.length ?? 0) - 1);
+    return <li key={paper.pmid} className="recent-paper-item">
+      <span className="recent-paper-index" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+      <div className="recent-paper-copy">
+        <h3 title={paper.title}>{paper.title}</h3>
+        <p><span title={paper.journal}>{paper.journal}</span>{paper.pubYear > 0 && <><i>·</i>{paper.pubYear}</>}{paper.savedAt && <><i>·</i>{formatOverviewDate(paper.savedAt)} 저장</>}</p>
+      </div>
+      <button
+        className={`recent-paper-project ${project ? "" : "is-unassigned"}`}
+        type="button"
+        style={project ? { "--project-color": project.color } : undefined}
+        onClick={() => onProjectOpen(project?.id ?? "unassigned")}
+        aria-label={`${project?.name ?? "미분류"} 관심 논문 보기`}
+      >
+        <i />
+        <span>{project?.name ?? "미분류"}{extraProjectCount > 0 ? ` +${extraProjectCount}` : ""}</span>
+      </button>
+    </li>;
+  })}</ul>;
+}
+
+function NextActions({ stats, onProjectOpen }) {
+  const actions = [
+    stats.unassignedCount > 0
+      ? { icon: "!", title: "미분류 논문 정리", meta: `${Number(stats.unassignedCount).toLocaleString()}편`, projectId: "unassigned", tone: "peach" }
+      : { icon: "✓", title: "논문 분류 상태 확인", meta: "분류 완료", projectId: "all", tone: "mint" },
+    stats.projectCount > 0
+      ? { icon: "▦", title: "프로젝트별 논문 확인", meta: `${Number(stats.projectCount).toLocaleString()}개`, projectId: "all", tone: "purple" }
+      : { icon: "+", title: "첫 연구 프로젝트 만들기", meta: "관심 논문에서 시작", projectId: "all", tone: "purple" },
+    stats.totalPapers > 0
+      ? { icon: "↗", title: "AI 채팅용 논문 선택", meta: `${Number(stats.totalPapers).toLocaleString()}편 중 선택`, projectId: "all", tone: "blue" }
+      : { icon: "⌕", title: "관심 논문 추가하기", meta: "검색부터 시작", projectId: "all", tone: "blue" },
+  ];
+  return <div className="next-action-list">{actions.map((action) => (
+    <button key={action.title} type="button" onClick={() => onProjectOpen(action.projectId)}>
+      <span className={`next-action-icon ${action.tone}`} aria-hidden="true">{action.icon}</span>
+      <span><strong>{action.title}</strong><small>{action.meta}</small></span>
+      <i aria-hidden="true">→</i>
+    </button>
+  ))}</div>;
 }
 
 function ProjectDistribution({ projects, unassignedCount, onProjectOpen }) {

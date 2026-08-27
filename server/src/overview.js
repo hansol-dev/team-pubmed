@@ -14,7 +14,7 @@ function yearCounts(value) {
 }
 
 export async function getOverviewWithClient(client, userId) {
-  const [summaryResult, projectsResult, latestRunResult] = await Promise.all([
+  const [summaryResult, projectsResult, latestRunResult, recentPapersResult] = await Promise.all([
     client.query(
       `WITH active_collection AS (
          SELECT collection.pmid,paper.journal,paper.rag_status,
@@ -82,6 +82,28 @@ export async function getOverviewWithClient(client, userId) {
        ORDER BY created_at DESC LIMIT 1`,
       [userId],
     ),
+    client.query(
+      `SELECT paper.pmid,paper.title,paper.journal,paper.publication_year,
+              collection.saved_at,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                  'id',project.id,'name',project.name,'color',project.color
+                ) ORDER BY project.sort_order,project.created_at,project.id)
+                FROM project_papers project_link
+                JOIN research_projects project
+                  ON project.id=project_link.project_id
+                 AND project.user_id=project_link.user_id
+                WHERE project_link.user_id=collection.user_id
+                  AND project_link.pmid=collection.pmid
+                  AND project_link.is_del=false AND project.is_del=false
+              ),'[]'::jsonb) AS projects
+       FROM user_paper_collections collection
+       JOIN pubmed_records paper ON paper.pmid=collection.pmid
+       WHERE collection.user_id=$1 AND collection.is_del=false
+       ORDER BY collection.saved_at DESC,paper.pmid DESC
+       LIMIT 4`,
+      [userId],
+    ),
   ]);
 
   const summary = summaryResult.rows[0] ?? {};
@@ -114,6 +136,14 @@ export async function getOverviewWithClient(client, userId) {
       totalMatches,
       searchedAt: latest.created_at,
     } : null,
+    recentPapers: recentPapersResult.rows.map((paper) => ({
+      pmid: paper.pmid,
+      title: paper.title,
+      journal: paper.journal,
+      pubYear: numeric(paper.publication_year),
+      savedAt: paper.saved_at,
+      projects: Array.isArray(paper.projects) ? paper.projects : [],
+    })),
   };
 }
 

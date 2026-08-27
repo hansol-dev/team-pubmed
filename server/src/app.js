@@ -29,7 +29,7 @@ import { countPubMedByYear, searchPubMed } from "./pubmed.js";
 import { getInterestWordCloud } from "./wordCloud.js";
 import { getOverview } from "./overview.js";
 
-export const API_REVISION = "2026-08-27-action-overview-v1";
+export const API_REVISION = "2026-08-27-overview-continuation-v1";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const parse = (schema, value) => schema.parse(value);

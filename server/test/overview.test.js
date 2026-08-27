@@ -34,6 +34,16 @@ test("builds an actionable overview from one user's active data", async () => {
         created_at: "2026-08-27T00:00:00.000Z",
       }],
     },
+    {
+      rows: [{
+        pmid: "12345678",
+        title: "A recent paper",
+        journal: "Journal of Useful Evidence",
+        publication_year: 2025,
+        saved_at: "2026-08-26T10:30:00.000Z",
+        projects: [{ id: "project-a", name: "비만 연구", color: "#7c6ee6" }],
+      }],
+    },
   ];
   const client = {
     query: async (text, params) => {
@@ -44,7 +54,7 @@ test("builds an actionable overview from one user's active data", async () => {
 
   const overview = await getOverviewWithClient(client, userId);
 
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.ok(calls.every(({ params }) => params[0] === userId));
   assert.match(calls[0].text, /collection\.is_del=false/);
   assert.match(calls[0].text, /document\.is_del=false/);
@@ -52,16 +62,27 @@ test("builds an actionable overview from one user's active data", async () => {
   assert.match(calls[1].text, /project\.is_del=false/);
   assert.match(calls[1].text, /collection\.is_del=false/);
   assert.match(calls[2].text, /is_del=false/);
+  assert.match(calls[3].text, /collection\.is_del=false/);
+  assert.match(calls[3].text, /project_link\.is_del=false AND project\.is_del=false/);
   assert.deepEqual(overview.analysisStatus, { ready: 5, abstractOnly: 6, processing: 1 });
   assert.equal(overview.projectDistribution[0].paperCount, 7);
   assert.deepEqual(overview.papersByYear, { 2023: 100, 2024: 130 });
   assert.equal(overview.latestSearch.keyword, "obesity");
   assert.equal(overview.latestSearch.totalMatches, 230);
+  assert.deepEqual(overview.recentPapers, [{
+    pmid: "12345678",
+    title: "A recent paper",
+    journal: "Journal of Useful Evidence",
+    pubYear: 2025,
+    savedAt: "2026-08-26T10:30:00.000Z",
+    projects: [{ id: "project-a", name: "비만 연구", color: "#7c6ee6" }],
+  }]);
 });
 
 test("returns an empty search trend without disguising interest-paper years as search data", async () => {
   const responses = [
     { rows: [{ total_papers: 0, project_count: 0 }] },
+    { rows: [] },
     { rows: [] },
     { rows: [] },
   ];
@@ -72,4 +93,5 @@ test("returns an empty search trend without disguising interest-paper years as s
   assert.deepEqual(overview.papersByYear, {});
   assert.equal(overview.latestSearch, null);
   assert.deepEqual(overview.projectDistribution, []);
+  assert.deepEqual(overview.recentPapers, []);
 });
