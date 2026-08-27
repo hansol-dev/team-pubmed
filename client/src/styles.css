@@ -840,7 +840,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 
 /* Keep search controls visible while only the result cards scroll on desktop. */
 @media (min-width:681px) {
-  #search.is-active { min-height:0; overflow:hidden; }
+  #search.is-active { min-height:0; overflow:visible; }
   #search.is-active .metadata-card { display:flex; width:100%; height:100%; min-height:0; overflow:hidden; flex:1 1 auto; flex-direction:column; }
   #search.is-active .paper-list { min-width:0; min-height:0; flex:1 1 auto; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; padding:2px 8px 8px 2px; scrollbar-gutter:stable; }
   #search.is-active .paper-list::-webkit-scrollbar { width:7px; }
