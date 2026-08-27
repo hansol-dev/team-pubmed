@@ -1482,7 +1482,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   }
   #overview .metric-card .metric-card-arrow {
     top:8px;
-    right:13px;
+    right:26px;
     font-size:.9rem;
   }
   #overview.is-active .overview-continuation-grid {
