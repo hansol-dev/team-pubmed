@@ -1120,17 +1120,6 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 #overview .metric-card.is-actionable:active {
   transform:translateY(0) scale(.99);
 }
-.metric-card-arrow {
-  position:absolute;
-  top:18px;
-  right:18px;
-  color:#8a8297;
-  font-size:1rem;
-  transition:transform .25s ease;
-}
-.metric-card.is-actionable:hover .metric-card-arrow {
-  transform:translateX(3px);
-}
 .overview-insight-grid {
   display:grid;
   grid-template-columns:repeat(12,minmax(0,1fr));
@@ -1479,11 +1468,6 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     line-height:1.3;
     text-overflow:ellipsis;
     white-space:nowrap;
-  }
-  #overview .metric-card .metric-card-arrow {
-    top:8px;
-    right:26px;
-    font-size:.9rem;
   }
   #overview.is-active .overview-continuation-grid {
     min-height:232px;
@@ -2088,10 +2072,6 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   }
   #overview .metric-card small {
     white-space:normal;
-  }
-  .metric-card-arrow {
-    top:16px;
-    right:15px;
   }
   .overview-insight-grid {
     grid-template-columns:1fr;

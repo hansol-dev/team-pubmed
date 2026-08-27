@@ -908,7 +908,7 @@ function Overview({ active, stats, onProjectOpen }) {
   return (
     <section id="overview" className={`tab-panel ${active ? "is-active" : ""}`}>
       <div className="metric-grid">
-        <Metric tone="purple" icon="⌘" label="관심 논문" value={stats.totalPapers} note="직접 등록한 논문" />
+        <Metric tone="purple" icon="⌘" label="관심 논문" value={stats.totalPapers} note="직접 등록한 논문" onClick={() => onProjectOpen("all")} />
         <Metric tone="mint" icon="▦" label="연구 프로젝트" value={stats.projectCount} note="진행 중인 연구 묶음" onClick={() => onProjectOpen("all")} />
         <Metric tone="peach" icon="!" label="미분류 논문" value={stats.unassignedCount} note="프로젝트 지정 필요" onClick={() => onProjectOpen("unassigned")} />
         <Metric tone="blue" icon="✓" label="원문 분석 완료" value={stats.analysisStatus.ready} note={`관심 논문 ${stats.totalPapers}편 중`} />
@@ -943,7 +943,7 @@ function OverviewCard({ className = "", eyebrow, title, children }) {
 }
 
 function Metric({ tone, icon, label, value, note, onClick }) {
-  const content = <><span className={`metric-icon ${tone}`}>{icon}</span><div className="metric-copy"><p>{label}</p><div className="metric-value-row"><strong>{Number(value ?? 0).toLocaleString()}</strong><small>{note}</small></div></div>{onClick && <span className="metric-card-arrow" aria-hidden="true">→</span>}</>;
+  const content = <><span className={`metric-icon ${tone}`}>{icon}</span><div className="metric-copy"><p>{label}</p><div className="metric-value-row"><strong>{Number(value ?? 0).toLocaleString()}</strong><small>{note}</small></div></div></>;
   if (onClick) return <button className="metric-card clay-card is-actionable" type="button" onClick={onClick}>{content}</button>;
   return <article className="metric-card clay-card">{content}</article>;
 }
