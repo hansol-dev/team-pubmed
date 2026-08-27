@@ -1432,7 +1432,8 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   #overview .metric-card {
     display:grid;
     min-height:88px;
-    grid-template-columns:32px minmax(0,1fr);
+    grid-template-columns:32px minmax(0,1fr) auto;
+    grid-template-rows:auto auto;
     align-content:center;
     column-gap:11px;
     padding:11px 16px;
@@ -1441,40 +1442,47 @@ button:disabled { cursor:not-allowed; opacity:.55; }
     width:32px;
     height:32px;
     grid-column:1;
+    grid-row:1/3;
     align-self:center;
   }
   #overview .metric-copy {
-    display:grid;
-    min-width:0;
-    grid-column:2;
-    align-content:center;
-    gap:2px;
+    display:contents;
   }
   #overview .metric-card p {
+    min-width:0;
+    grid-column:2;
+    grid-row:1;
+    align-self:end;
     margin:0;
     line-height:1.25;
   }
   #overview .metric-value-row {
-    display:flex;
-    min-width:0;
-    align-items:baseline;
-    gap:8px;
+    display:contents;
   }
   #overview .metric-card strong {
-    flex:0 0 auto;
-    font-size:1.45rem;
+    grid-column:3;
+    grid-row:1/3;
+    align-self:center;
+    justify-self:end;
+    font-size:1.55rem;
     line-height:1;
   }
   #overview .metric-card small {
     min-width:0;
-    flex:1 1 auto;
+    grid-column:2;
+    grid-row:2;
+    align-self:start;
+    overflow:hidden;
     color:#686172;
     font-weight:520;
     line-height:1.3;
+    text-overflow:ellipsis;
+    white-space:nowrap;
   }
   #overview .metric-card .metric-card-arrow {
-    top:13px;
-    right:15px;
+    top:8px;
+    right:13px;
+    font-size:.9rem;
   }
   #overview.is-active .overview-continuation-grid {
     min-height:232px;
