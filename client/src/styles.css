@@ -1075,6 +1075,8 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 /* Action-oriented overview: compact workspace, evidence and search summaries. */
 #overview.is-active {
   gap:16px;
+  margin-bottom:0;
+  padding-bottom:0;
 }
 #overview .metric-grid {
   gap:14px;
@@ -1270,7 +1272,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   width:28px;
   height:28px;
   place-items:center;
-  align-self:start;
+  align-self:center;
   border-radius:9px;
   color:#7165be;
   background:#efecff;
@@ -1424,6 +1426,28 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 .recent-paper-project:focus-visible,.next-action-list > button:focus-visible {
   outline:3px solid rgba(111,95,196,.2);
   outline-offset:2px;
+}
+
+@media (min-width:1001px) {
+  #overview.is-active .overview-continuation-grid {
+    min-height:232px;
+    flex:1 1 232px;
+  }
+  #overview.is-active .overview-continuation-grid .overview-card {
+    display:flex;
+    height:100%;
+    flex-direction:column;
+  }
+  #overview.is-active .recent-paper-list,
+  #overview.is-active .next-action-list {
+    flex:1 1 auto;
+  }
+  #overview.is-active .recent-paper-list {
+    grid-auto-rows:minmax(73px,1fr);
+  }
+  #overview.is-active .next-action-list {
+    grid-template-rows:repeat(3,minmax(51px,1fr));
+  }
 }
 .project-insight-list {
   display:grid;
