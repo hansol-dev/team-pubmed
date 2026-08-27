@@ -8,21 +8,28 @@ import { supabase } from "../lib/supabase";
 import { paperHasKeyword } from "../lib/wordCloud";
 
 const INTRO = "선택한 논문을 바탕으로 무엇이 궁금한가요?";
-const emptyOverview = { totalPapers: 0, totalJournals: 0, topJournals: [], papersByYear: {} };
+const emptyOverview = {
+  totalPapers: 0,
+  totalJournals: 0,
+  projectCount: 0,
+  unassignedCount: 0,
+  projectDistribution: [],
+  analysisStatus: { ready: 0, abstractOnly: 0, processing: 0 },
+  papersByYear: {},
+  latestSearch: null,
+};
 const previewOverview = {
   totalPapers: 2410,
   totalJournals: 47,
-  topJournals: [
-    ["Nature Medicine", 242],
-    ["JAMA Network Open", 188],
-    ["The Lancet", 156],
-    ["Obesity Reviews", 134],
-    ["International Journal of Obesity", 119],
-    ["Diabetes, Obesity and Metabolism", 104],
-    ["Nutrients", 96],
-    ["Frontiers in Endocrinology", 84],
-    ["BMC Medicine", 72],
+  projectCount: 4,
+  unassignedCount: 184,
+  projectDistribution: [
+    { id: "preview-obesity", name: "비만 중재 연구", color: "#7769cf", paperCount: 760 },
+    { id: "preview-diabetes", name: "당뇨 위험요인", color: "#4d9488", paperCount: 618 },
+    { id: "preview-digital", name: "디지털 헬스", color: "#cb7a5e", paperCount: 502 },
+    { id: "preview-review", name: "리뷰 후보", color: "#5e83b2", paperCount: 346 },
   ],
+  analysisStatus: { ready: 1380, abstractOnly: 990, processing: 40 },
   papersByYear: {
     2020: 238,
     2021: 342,
@@ -30,6 +37,14 @@ const previewOverview = {
     2023: 548,
     2024: 397,
     2025: 501,
+  },
+  latestSearch: {
+    keyword: "obesity intervention",
+    yearFrom: 2020,
+    yearTo: 2025,
+    resultCount: 100,
+    totalMatches: 2477,
+    searchedAt: "2026-08-27T00:00:00.000Z",
   },
 };
 
@@ -123,11 +138,34 @@ function normalizeList(body) {
 
 function normalizeOverview(body = {}) {
   const stats = body.stats ?? body;
+  const analysis = stats.analysisStatus ?? stats.analysis_status ?? {};
+  const latest = stats.latestSearch ?? stats.latest_search ?? null;
+  const projects = stats.projectDistribution ?? stats.project_distribution ?? [];
   return {
     totalPapers: stats.totalPapers ?? stats.total_papers ?? 0,
     totalJournals: stats.totalJournals ?? stats.total_journals ?? 0,
-    topJournals: stats.topJournals ?? stats.top_journals ?? [],
+    projectCount: stats.projectCount ?? stats.project_count ?? 0,
+    unassignedCount: stats.unassignedCount ?? stats.unassigned_count ?? 0,
+    projectDistribution: projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      color: project.color,
+      paperCount: Number(project.paperCount ?? project.paper_count ?? 0),
+    })),
+    analysisStatus: {
+      ready: Number(analysis.ready ?? 0),
+      abstractOnly: Number(analysis.abstractOnly ?? analysis.abstract_only ?? 0),
+      processing: Number(analysis.processing ?? 0),
+    },
     papersByYear: stats.papersByYear ?? stats.papers_by_year ?? stats.latestTrend?.papers_by_year ?? {},
+    latestSearch: latest ? {
+      keyword: latest.keyword ?? "",
+      yearFrom: Number(latest.yearFrom ?? latest.year_from ?? 0),
+      yearTo: Number(latest.yearTo ?? latest.year_to ?? 0),
+      resultCount: Number(latest.resultCount ?? latest.result_count ?? 0),
+      totalMatches: Number(latest.totalMatches ?? latest.total_matches ?? 0),
+      searchedAt: latest.searchedAt ?? latest.searched_at ?? null,
+    } : null,
   };
 }
 
@@ -195,7 +233,6 @@ export default function Dashboard({ session, preview = false }) {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [overview, setOverview] = useState(preview ? previewOverview : emptyOverview);
-  const [lastSearchCount, setLastSearchCount] = useState(preview ? 186 : 0);
   const [searchResults, setSearchResults] = useState([]);
   const [searchSelected, setSearchSelected] = useState([]);
   const [searchRunId, setSearchRunId] = useState(null);
@@ -314,7 +351,6 @@ export default function Dashboard({ session, preview = false }) {
       setSearchSelected([]);
       setSearchRunId(result.searchRunId ?? result.search_run_id ?? null);
       setSearchQuery(values.keyword.trim());
-      setLastSearchCount(found);
       setStatus(`검색 완료 · ${found}건을 찾았습니다. 관심 논문은 직접 추가해주세요.`);
       setTab("search");
       setMobileSheet(false);
@@ -344,7 +380,6 @@ export default function Dashboard({ session, preview = false }) {
       setConversations([]);
       setConversationId(null);
       setMessages([]);
-      setLastSearchCount(0);
       setSearchResults([]);
       setSearchSelected([]);
       setSearchRunId(null);
@@ -692,6 +727,12 @@ export default function Dashboard({ session, preview = false }) {
     if (preview) graphUrl.searchParams.set("preview", "1");
     window.open(graphUrl.toString(), "_blank", "noopener,noreferrer");
   };
+  const openOverviewProject = (projectId = "all") => {
+    setTab("papers");
+    setMobileSheet(false);
+    setSelected([]);
+    if (!preview) Promise.allSettled([loadPapersByProject(projectId), loadProjects()]);
+  };
 
   return (
     <main className={`app-shell ${mobileSheet ? "collect-sheet-open" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
@@ -733,10 +774,7 @@ export default function Dashboard({ session, preview = false }) {
         <Overview
           active={tab === "overview"}
           stats={overview}
-          searchStats={{
-            found: lastSearchCount,
-            interested: preview ? 32 : searchResults.filter((paper) => paper.isSaved).length,
-          }}
+          onProjectOpen={openOverviewProject}
         />
         <SearchResults
           active={tab === "search"}
@@ -812,40 +850,117 @@ function Sidebar({ onCollect, onReset, status, onClose }) {
   );
 }
 
-function Overview({ active, stats, searchStats }) {
-  const yearEntries = Object.entries(stats.papersByYear);
+function Overview({ active, stats, onProjectOpen }) {
   return (
     <section id="overview" className={`tab-panel ${active ? "is-active" : ""}`}>
       <div className="metric-grid">
         <Metric tone="purple" icon="⌘" label="관심 논문" value={stats.totalPapers} note="직접 등록한 논문" />
-        <Metric tone="mint" icon="⌕" label="이번 검색 결과" value={searchStats.found} note="PubMed 검색 결과" />
-        <Metric tone="peach" icon="☆" label="검색 결과 중 관심" value={searchStats.interested} note="현재 관심 등록된 논문" />
-        <Metric tone="blue" icon="▤" label="저널 수" value={stats.totalJournals} note="분석 대상 저널" />
+        <Metric tone="mint" icon="▦" label="연구 프로젝트" value={stats.projectCount} note="진행 중인 연구 묶음" onClick={() => onProjectOpen("all")} />
+        <Metric tone="peach" icon="!" label="미분류 논문" value={stats.unassignedCount} note="프로젝트 지정 필요" onClick={() => onProjectOpen("unassigned")} />
+        <Metric tone="blue" icon="✓" label="원문 분석 완료" value={stats.analysisStatus.ready} note={`관심 논문 ${stats.totalPapers}편 중`} />
       </div>
-      <div className="chart-grid">
-        <ChartCard eyebrow="PUBLICATION TREND" title="PubMed 검색 결과 수(연도별)"><Trend entries={yearEntries} /></ChartCard>
-        <ChartCard eyebrow="INTEREST DISTRIBUTION" title="관심 논문 상위 저널"><Bars entries={stats.topJournals} /></ChartCard>
+      <div className="overview-insight-grid">
+        <OverviewCard className="project-insight-card" eyebrow="RESEARCH WORKSPACES" title="프로젝트별 관심 논문">
+          <button className="overview-card-action" type="button" onClick={() => onProjectOpen("all")}>전체 보기 <span aria-hidden="true">→</span></button>
+          <ProjectDistribution projects={stats.projectDistribution} unassignedCount={stats.unassignedCount} onProjectOpen={onProjectOpen} />
+        </OverviewCard>
+        <OverviewCard className="analysis-insight-card" eyebrow="EVIDENCE READINESS" title="분석 준비 상태">
+          <AnalysisReadiness status={stats.analysisStatus} total={stats.totalPapers} />
+        </OverviewCard>
+        <OverviewCard className="search-insight-card" eyebrow="RECENT SEARCH" title={stats.latestSearch ? `“${stats.latestSearch.keyword}” 검색 추이` : "최근 검색 추이"}>
+          <SearchTrend entries={stats.papersByYear} search={stats.latestSearch} />
+        </OverviewCard>
       </div>
     </section>
   );
 }
 
-function Metric({ tone, icon, label, value, note }) {
-  return <article className="metric-card clay-card"><span className={`metric-icon ${tone}`}>{icon}</span><p>{label}</p><strong>{value}</strong><small>{note}</small></article>;
+function OverviewCard({ className = "", eyebrow, title, children }) {
+  return <article className={`overview-card clay-card ${className}`}><div className="overview-card-heading"><div><p className="eyebrow">{eyebrow}</p><h2 title={title}>{title}</h2></div></div>{children}</article>;
 }
-function ChartCard({ eyebrow, title, children }) {
-  return <article className="chart-card clay-card"><div className="card-heading"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div></div>{children}</article>;
+
+function Metric({ tone, icon, label, value, note, onClick }) {
+  const content = <><span className={`metric-icon ${tone}`}>{icon}</span><p>{label}</p><strong>{Number(value ?? 0).toLocaleString()}</strong><small>{note}</small>{onClick && <span className="metric-card-arrow" aria-hidden="true">→</span>}</>;
+  if (onClick) return <button className="metric-card clay-card is-actionable" type="button" onClick={onClick}>{content}</button>;
+  return <article className="metric-card clay-card">{content}</article>;
 }
-function Trend({ entries }) {
-  if (!entries.length) return <div className="chart-empty"><span>✦</span><p>검색 후 연도별 결과가 표시됩니다.</p></div>;
-  const max = Math.max(...entries.map(([, value]) => Number(value)), 1);
-  return <div className="trend-chart" style={{ "--trend-count": entries.length }}>{entries.map(([year, value]) => <div className="trend-column" key={year}><div className="trend-track" style={{ "--bar-height": `${Math.max(5, Math.round(Number(value) / max * 100))}%` }}><strong>{Number(value).toLocaleString()}</strong><span /></div><small>{year}</small></div>)}</div>;
+
+function ProjectDistribution({ projects, unassignedCount, onProjectOpen }) {
+  if (!projects.length && unassignedCount > 0) return <div className="project-start-state"><span><strong>{Number(unassignedCount).toLocaleString()}</strong>편</span><div><strong>모든 관심 논문이 아직 미분류입니다.</strong><p>프로젝트를 하나 만들고 관련 논문부터 묶어보세요.</p></div><button type="button" onClick={() => onProjectOpen("unassigned")}>프로젝트 만들고 분류하기 <span aria-hidden="true">→</span></button></div>;
+  const entries = [
+    ...(unassignedCount > 0 ? [{ id: "unassigned", name: "미분류", color: "#c7785c", paperCount: unassignedCount }] : []),
+    ...projects,
+  ];
+  if (!entries.length) return <div className="overview-empty"><span aria-hidden="true">▦</span><strong>아직 프로젝트가 없습니다.</strong><p>관심 논문에서 프로젝트를 만들고 연구 주제별로 묶어보세요.</p><button type="button" onClick={() => onProjectOpen("all")}>관심 논문으로 이동</button></div>;
+  const max = Math.max(...entries.map((entry) => Number(entry.paperCount)), 1);
+  return <div className="project-insight-list">{entries.map((entry) => (
+    <button key={entry.id} type="button" className="project-insight-row" onClick={() => onProjectOpen(entry.id)}>
+      <span className="project-insight-label"><i style={{ "--project-color": entry.color }} /><span title={entry.name}>{entry.name}</span></span>
+      <span className="project-insight-track"><i style={{ width: `${Math.max(3, Number(entry.paperCount) / max * 100)}%`, "--project-color": entry.color }} /></span>
+      <strong>{Number(entry.paperCount).toLocaleString()}편</strong>
+    </button>
+  ))}</div>;
 }
-function Bars({ entries }) {
-  const normalized = entries.map((item) => Array.isArray(item) ? item : [item.journal ?? item.label, item.count ?? item.value]);
-  if (!normalized.length) return <div className="chart-empty"><span>✦</span><p>관심 논문이 없으면 주요 저널이 표시되지 않습니다.</p></div>;
-  const max = Math.max(...normalized.map(([, value]) => Number(value)), 1);
-  return <div className="bar-chart">{normalized.map(([label, value]) => <div className="bar-row" key={label}><div className="bar-label">{label}</div><div className="bar-track"><span className="bar-fill mint" style={{ width: `${Math.max(5, Number(value) / max * 100)}%` }} /></div><strong>{value}</strong></div>)}</div>;
+
+function AnalysisReadiness({ status, total }) {
+  const entries = [
+    { key: "ready", label: "원문 분석 완료", value: status.ready, color: "#4d9488" },
+    { key: "abstract", label: "초록 기반", value: status.abstractOnly, color: "#7189b6" },
+    { key: "processing", label: "처리 중", value: status.processing, color: "#c98263" },
+  ];
+  const denominator = Math.max(Number(total), 1);
+  const readyRatio = total ? Math.round(Number(status.ready) / denominator * 100) : 0;
+  if (!total) return <div className="overview-empty compact"><span aria-hidden="true">✓</span><strong>분석할 관심 논문이 없습니다.</strong><p>논문을 저장하면 근거 준비 상태를 확인할 수 있습니다.</p></div>;
+  return <div className="analysis-readiness">
+    <div className="analysis-score"><strong>{readyRatio}%</strong><span>원문 근거 준비</span></div>
+    <div className="analysis-stack" aria-label={`원문 분석 완료 ${status.ready}편, 초록 기반 ${status.abstractOnly}편, 처리 중 ${status.processing}편`}>
+      {entries.filter((entry) => entry.value > 0).map((entry) => <i key={entry.key} style={{ width: `${Number(entry.value) / denominator * 100}%`, "--status-color": entry.color }} />)}
+    </div>
+    <ul>{entries.map((entry) => <li key={entry.key}><span><i style={{ "--status-color": entry.color }} />{entry.label}</span><strong>{Number(entry.value).toLocaleString()}편</strong></li>)}</ul>
+    <p className="analysis-note">원문이 없어도 제목과 초록으로 대화할 수 있습니다.</p>
+  </div>;
+}
+
+function compactCount(value) {
+  const number = Number(value ?? 0);
+  if (number >= 100_000) return `${(number / 10_000).toFixed(1).replace(/\.0$/, "")}만`;
+  if (number >= 10_000) return `${(number / 10_000).toFixed(1).replace(/\.0$/, "")}만`;
+  if (number >= 1_000) return `${(number / 1_000).toFixed(1).replace(/\.0$/, "")}천`;
+  return number.toLocaleString();
+}
+
+function SearchTrend({ entries, search }) {
+  const normalized = Object.entries(entries ?? {}).map(([year, value]) => [Number(year), Number(value)]).filter(([year, value]) => Number.isFinite(year) && Number.isFinite(value)).sort(([left], [right]) => left - right);
+  if (!search || !normalized.length) return <div className="overview-empty compact"><span aria-hidden="true">⌕</span><strong>아직 검색 기록이 없습니다.</strong><p>PubMed 검색 후 키워드별 연도 추이를 확인할 수 있습니다.</p></div>;
+  const periodLabel = search.yearFrom === search.yearTo ? `${search.yearFrom}년` : `${search.yearFrom}–${search.yearTo}`;
+  if (normalized.length === 1) return <div className="search-trend-summary">
+    <div className="search-trend-meta"><span>{periodLabel} · PubMed 전체 결과</span><strong>총 {compactCount(search.totalMatches)}건</strong></div>
+    <div className="single-year-trend"><span>{normalized[0][0]}</span><strong>{compactCount(normalized[0][1])}<small>건</small></strong><i style={{ "--single-bar": "100%" }} /></div>
+    <p>한 해만 검색했습니다. 기간을 넓히면 연도별 증가·감소를 비교할 수 있습니다.</p>
+  </div>;
+  const width = 320;
+  const height = 92;
+  const paddingX = 9;
+  const paddingY = 10;
+  const max = Math.max(...normalized.map(([, value]) => value), 1);
+  const point = ([, value], index) => ({
+    x: normalized.length === 1 ? width / 2 : paddingX + index / (normalized.length - 1) * (width - paddingX * 2),
+    y: height - paddingY - value / max * (height - paddingY * 2),
+  });
+  const points = normalized.map(point);
+  const line = points.map(({ x, y }) => `${x},${y}`).join(" ");
+  const area = `M ${points[0].x} ${height - paddingY} L ${points.map(({ x, y }) => `${x} ${y}`).join(" L ")} L ${points.at(-1).x} ${height - paddingY} Z`;
+  const peakIndex = normalized.findIndex(([, value]) => value === max);
+  return <div className="search-trend-summary">
+    <div className="search-trend-meta"><span>{periodLabel} · PubMed 전체 결과</span><strong>총 {compactCount(search.totalMatches)}건</strong></div>
+    <svg className="search-sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${search.keyword} 검색 결과의 연도별 변화`}>
+      <path className="search-sparkline-area" d={area} />
+      <polyline className="search-sparkline-line" points={line} />
+      {points.map(({ x, y }, index) => <circle key={normalized[index][0]} cx={x} cy={y} r={index === peakIndex ? 4 : 2.5}><title>{normalized[index][0]}년 ${normalized[index][1].toLocaleString()}건</title></circle>)}
+    </svg>
+    <div className="search-trend-axis"><span>{normalized[0][0]}</span><strong>최고 {normalized[peakIndex][0]}년 · {compactCount(max)}건</strong><span>{normalized.at(-1)[0]}</span></div>
+    <p>검색된 최대 100편이 아니라 PubMed의 전체 검색 건수입니다.</p>
+  </div>;
 }
 
 function SearchResults({ active, papers, query, selectedPmids, onToggleSelection, onSelectAll, onSaveSelected, onInterestToggle, interestPending }) {

@@ -27,8 +27,9 @@ import {
 } from "./pmc.js";
 import { countPubMedByYear, searchPubMed } from "./pubmed.js";
 import { getInterestWordCloud } from "./wordCloud.js";
+import { getOverview } from "./overview.js";
 
-export const API_REVISION = "2026-08-25-project-wordcloud-v2";
+export const API_REVISION = "2026-08-27-action-overview-v1";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const parse = (schema, value) => schema.parse(value);
@@ -477,36 +478,7 @@ export function createApp({ authMiddleware = requireUser } = {}) {
   }));
 
   app.get("/api/overview", asyncRoute(async (req, res) => {
-    const [summary, years, journals, latestRun] = await Promise.all([
-      query(`SELECT count(*)::int AS total_papers, count(DISTINCT NULLIF(p.journal,''))::int AS total_journals
-             FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
-             WHERE up.user_id=$1 AND up.is_del=false`, [req.user.id]),
-      query(`SELECT p.publication_year AS year, count(*)::int AS count FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
-             WHERE up.user_id=$1 AND up.is_del=false AND p.publication_year IS NOT NULL
-             GROUP BY p.publication_year ORDER BY p.publication_year`, [req.user.id]),
-      query(`SELECT p.journal, count(*)::int AS count FROM user_paper_collections up JOIN pubmed_records p ON p.pmid=up.pmid
-             WHERE up.user_id=$1 AND up.is_del=false AND p.journal<>''
-             GROUP BY p.journal ORDER BY count DESC, p.journal LIMIT 10`, [req.user.id]),
-      query(`SELECT year_from, year_to, request_params
-             FROM search_runs WHERE user_id=$1 AND status='completed' AND is_del=false
-             ORDER BY created_at DESC LIMIT 1`, [req.user.id]),
-    ]);
-    const collectedByYear = Object.fromEntries(years.rows.map((row) => [row.year, row.count]));
-    const latest = latestRun.rows[0];
-    const storedTrend = latest?.request_params?.papersByYear;
-    const papersByYear = latest
-      ? fillYearRange(
-          Number(latest.year_from),
-          Number(latest.year_to),
-          storedTrend && Object.keys(storedTrend).length ? storedTrend : collectedByYear,
-        )
-      : collectedByYear;
-    res.json({
-      totalPapers: summary.rows[0].total_papers,
-      totalJournals: summary.rows[0].total_journals,
-      papersByYear,
-      topJournals: journals.rows,
-    });
+    res.json(await getOverview(req.user.id));
   }));
 
   app.get("/api/trend", asyncRoute(async (req, res) => {
