@@ -1243,7 +1243,7 @@ button:disabled { cursor:not-allowed; opacity:.55; }
 }
 .recent-paper-list {
   display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
+  grid-template-columns:1fr;
   gap:10px;
   margin:0;
   padding:0;
@@ -1440,18 +1440,23 @@ button:disabled { cursor:not-allowed; opacity:.55; }
   }
   #overview.is-active .recent-paper-list,
   #overview.is-active .next-action-list {
+    min-height:0;
     flex:1 1 auto;
+    grid-template-rows:repeat(3,minmax(64px,1fr));
   }
   #overview.is-active .recent-paper-list {
     grid-template-columns:1fr;
-    grid-auto-rows:minmax(64px,1fr);
   }
   #overview.is-active .recent-paper-item {
     min-height:64px;
     padding:10px 12px;
   }
-  #overview.is-active .next-action-list {
-    grid-template-rows:repeat(3,minmax(51px,1fr));
+  #overview.is-active .recent-paper-copy h3 {
+    -webkit-line-clamp:1;
+  }
+  #overview.is-active .next-action-list > button {
+    min-height:64px;
+    padding:10px 12px;
   }
 }
 .project-insight-list {

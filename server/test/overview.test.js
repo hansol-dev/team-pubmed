@@ -64,6 +64,7 @@ test("builds an actionable overview from one user's active data", async () => {
   assert.match(calls[2].text, /is_del=false/);
   assert.match(calls[3].text, /collection\.is_del=false/);
   assert.match(calls[3].text, /project_link\.is_del=false AND project\.is_del=false/);
+  assert.match(calls[3].text, /LIMIT 3/);
   assert.deepEqual(overview.analysisStatus, { ready: 5, abstractOnly: 6, processing: 1 });
   assert.equal(overview.projectDistribution[0].paperCount, 7);
   assert.deepEqual(overview.papersByYear, { 2023: 100, 2024: 130 });

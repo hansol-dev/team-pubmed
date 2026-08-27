@@ -72,18 +72,26 @@ const previewOverview = {
       savedAt: "2026-08-24T14:10:00.000Z",
       projects: [{ id: "preview-digital", name: "디지털 헬스", color: "#cb7a5e" }],
     },
-    {
-      pmid: "40981033",
-      title: "Evidence synthesis methods for complex clinical interventions",
-      journal: "BMC Medical Research Methodology",
-      pubYear: 2024,
-      savedAt: "2026-08-22T04:45:00.000Z",
-      projects: [],
-    },
   ],
 };
 
 let chromeTranslatorPromise = null;
+
+function normalizeDisplayText(value, fallback = "") {
+  const decoded = String(value ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("\u00a0", " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return decoded || fallback;
+}
 
 function getChromeEnglishToKoreanTranslator(onProgress) {
   const TranslatorApi = globalThis.Translator;
@@ -111,6 +119,8 @@ function getChromeEnglishToKoreanTranslator(onProgress) {
 
 const normalizePaper = (paper) => ({
   ...paper,
+  title: normalizeDisplayText(paper.title, "제목 정보 없음"),
+  journal: normalizeDisplayText(paper.journal, "저널 정보 없음"),
   id: paper.id ?? paper.paper_id ?? paper.pmid,
   pubYear: paper.pubYear ?? paper.pub_year ?? paper.year,
   fullTextUrl: paper.fullTextUrl ?? paper.full_text_url,
@@ -204,8 +214,8 @@ function normalizeOverview(body = {}) {
     } : null,
     recentPapers: recentPapers.map((paper) => ({
       pmid: paper.pmid,
-      title: paper.title ?? "제목 정보 없음",
-      journal: paper.journal ?? "저널 정보 없음",
+      title: normalizeDisplayText(paper.title, "제목 정보 없음"),
+      journal: normalizeDisplayText(paper.journal, "저널 정보 없음"),
       pubYear: Number(paper.pubYear ?? paper.pub_year ?? paper.publication_year ?? 0),
       savedAt: paper.savedAt ?? paper.saved_at ?? null,
       projects: Array.isArray(paper.projects) ? paper.projects : [],

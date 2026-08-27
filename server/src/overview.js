@@ -101,7 +101,7 @@ export async function getOverviewWithClient(client, userId) {
        JOIN pubmed_records paper ON paper.pmid=collection.pmid
        WHERE collection.user_id=$1 AND collection.is_del=false
        ORDER BY collection.saved_at DESC,paper.pmid DESC
-       LIMIT 4`,
+       LIMIT 3`,
       [userId],
     ),
   ]);
