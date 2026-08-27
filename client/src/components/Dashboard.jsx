@@ -943,7 +943,7 @@ function OverviewCard({ className = "", eyebrow, title, children }) {
 }
 
 function Metric({ tone, icon, label, value, note, onClick }) {
-  const content = <><span className={`metric-icon ${tone}`}>{icon}</span><p>{label}</p><strong>{Number(value ?? 0).toLocaleString()}</strong><small>{note}</small>{onClick && <span className="metric-card-arrow" aria-hidden="true">→</span>}</>;
+  const content = <><span className={`metric-icon ${tone}`}>{icon}</span><div className="metric-copy"><p>{label}</p><div className="metric-value-row"><strong>{Number(value ?? 0).toLocaleString()}</strong><small>{note}</small></div></div>{onClick && <span className="metric-card-arrow" aria-hidden="true">→</span>}</>;
   if (onClick) return <button className="metric-card clay-card is-actionable" type="button" onClick={onClick}>{content}</button>;
   return <article className="metric-card clay-card">{content}</article>;
 }
