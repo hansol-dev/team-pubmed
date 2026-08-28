@@ -30,7 +30,7 @@ server does not maintain a second, competing schema.
 - `POST /api/projects/:projectId/restore` — restore a project and its active-paper links
 - `PUT /api/papers/:pmid/projects` — `{ projectIds }`, replace a paper's project links without physical deletion
 - `PUT /api/papers/projects` — `{ pmids, projectIds, mode: "add"|"replace" }`, classify up to 100 interest papers at once
-- `GET /api/overview`
+- `GET /api/overview` — 프로젝트 분포, 미분류 수, 분석 준비 상태, 최근 검색 추이
 - `GET /api/trend?keyword&yearFrom&yearTo`
 - `GET /api/papers?keyword&yearFrom&yearTo&journal&projectId&limit` (`projectId=unassigned` is supported)
 - `GET /api/wordcloud?keyword&yearFrom&yearTo&journal&projectId&termLimit` — aggregate title+abstract keywords across the authenticated user's complete active interest scope; returns `paperCount`, `occurrences`, and title-weighted `score`

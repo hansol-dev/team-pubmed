@@ -19,7 +19,7 @@ const fakeAuth = (req, _res, next) => {
 };
 
 test("exposes a deployment revision for API bundle verification", () => {
-  assert.equal(API_REVISION, "2026-08-25-project-wordcloud-v2");
+  assert.equal(API_REVISION, "2026-08-27-overview-spacing-v1");
 });
 
 test("returns authenticated user contract", async () => {
