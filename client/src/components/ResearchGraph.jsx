@@ -1,4 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   forceCenter,
   forceCollide,
@@ -8,11 +10,17 @@ import {
   forceX,
   forceY,
 } from "d3-force";
-import corpus from "../data/research-graph.json";
+import demoCorpus from "../data/research-graph.json";
+import { api } from "../lib/api.js";
+import {
+  RESEARCH_CONCEPTS,
+  RESEARCH_TOPICS,
+  researchWords,
+} from "../../../shared/researchGraph.js";
 
 const ResearchGraph3D = lazy(() => import("./ResearchGraph3D.jsx"));
 
-const GRAPH_WIDTH = 1400;
+const GRAPH_WIDTH = 900;
 const GRAPH_HEIGHT = 860;
 const DEFAULT_CAMERA = { x: 0, y: 0, width: GRAPH_WIDTH, height: GRAPH_HEIGHT };
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -23,43 +31,8 @@ function isEditableTarget(target) {
     && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 }
 
-const topicTerms = {
-  oncology: ["암", "종양", "항암", "바이오마커", "정밀의료", "cancer", "oncology", "tumor", "biomarker"],
-  cardiovascular: ["심혈관", "심장", "혈압", "뇌졸중", "예방", "cardiovascular", "heart", "stroke", "prevention"],
-  neuroscience: ["뇌", "신경", "치매", "알츠하이머", "파킨슨", "neuro", "brain", "dementia", "alzheimer"],
-  metabolism: ["당뇨", "비만", "대사", "인슐린", "혈당", "diabetes", "obesity", "metabolic", "insulin"],
-  "mental-health": ["정신건강", "우울", "불안", "스트레스", "디지털 치료", "mental", "depression", "anxiety", "stress"],
-  "public-health": ["공중보건", "감염병", "역학", "유행", "감시", "public health", "infectious", "surveillance", "epidemiology"],
-};
-
-const stopwords = new Set([
-  "about", "after", "among", "and", "are", "based", "between", "from", "into", "of", "for",
-  "study", "the", "this", "through", "using", "with", "논문", "연구", "어떻게", "대한", "에서",
-  "으로", "있는", "알려줘", "보여줘", "분석", "결과",
-]);
-
-const conceptCatalog = [
-  { id: "cancer-biomarker", label: "암 바이오마커", group: "질환·표지자", color: "#ff9ca8", terms: ["cancer biomarker", "tumor biomarker", "molecular biomarker", "precision oncology"] },
-  { id: "immunotherapy", label: "면역치료", group: "치료·중재", color: "#ffb08c", terms: ["immunotherapy", "immune checkpoint", "car-t", "tumor immunity"] },
-  { id: "genomics", label: "유전체 분석", group: "연구 방법", color: "#d89cff", terms: ["genomic", "genome", "sequencing", "transcriptomic", "gene expression"] },
-  { id: "cardiovascular-prevention", label: "심혈관 예방", group: "질환·예방", color: "#6ee0d2", terms: ["cardiovascular prevention", "cardiovascular risk", "heart disease prevention"] },
-  { id: "hypertension", label: "고혈압", group: "질환", color: "#7dd7c6", terms: ["hypertension", "hypertensive", "blood pressure"] },
-  { id: "stroke", label: "뇌졸중", group: "질환", color: "#76c8dc", terms: ["stroke", "cerebrovascular"] },
-  { id: "alzheimers", label: "알츠하이머병", group: "질환", color: "#a89cff", terms: ["alzheimer", "amyloid-beta", "amyloid β", "tau-441"] },
-  { id: "neurodegeneration", label: "신경퇴행", group: "질환", color: "#998df2", terms: ["neurodegenerative", "neurodegeneration", "parkinson", "dementia"] },
-  { id: "diabetes", label: "당뇨병", group: "질환", color: "#ffbd73", terms: ["diabetes", "diabetic", "glycemic", "glucose"] },
-  { id: "obesity", label: "비만·대사", group: "질환", color: "#ffc66f", terms: ["obesity", "obese", "metabolic syndrome", "insulin resistance"] },
-  { id: "lifestyle", label: "생활습관 중재", group: "치료·중재", color: "#e9cf73", terms: ["lifestyle intervention", "physical activity", "exercise", "dietary", "nutrition"] },
-  { id: "mental-health", label: "정신건강", group: "질환", color: "#73b8ff", terms: ["mental health", "depression", "anxiety", "psychological"] },
-  { id: "digital-health", label: "디지털 헬스", group: "치료·중재", color: "#65c8ff", terms: ["digital health", "mobile health", "mhealth", "digital intervention", "internet-based"] },
-  { id: "infectious-disease", label: "감염병", group: "질환", color: "#dd83ef", terms: ["infectious disease", "infection", "virus", "bacterial", "pathogen"] },
-  { id: "surveillance", label: "공중보건 감시", group: "공중보건", color: "#e889ec", terms: ["surveillance", "outbreak", "epidemiology", "public health"] },
-  { id: "clinical-trial", label: "임상시험", group: "연구 방법", color: "#83d9b5", terms: ["clinical trial", "randomized", "randomised", "controlled trial"] },
-  { id: "cohort-study", label: "코호트 연구", group: "연구 방법", color: "#8bd2c0", terms: ["cohort", "longitudinal", "prospective study", "retrospective study"] },
-  { id: "systematic-review", label: "체계적 문헌고찰", group: "연구 방법", color: "#b5ca83", terms: ["systematic review", "meta-analysis", "scoping review"] },
-  { id: "machine-learning", label: "머신러닝", group: "연구 방법", color: "#89baff", terms: ["machine learning", "deep learning", "artificial intelligence", "neural network"] },
-  { id: "diagnostic-biomarker", label: "진단 바이오마커", group: "표지자", color: "#f090bc", terms: ["diagnostic biomarker", "early diagnosis", "early detection", "biosensor"] },
-];
+const topicTerms = Object.fromEntries(RESEARCH_TOPICS.map((topic) => [topic.id, topic.terms]));
+const conceptCatalog = RESEARCH_CONCEPTS;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
@@ -73,8 +46,7 @@ function hashText(value) {
 }
 
 function words(value) {
-  return (String(value || "").toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}-]{1,}/gu) || [])
-    .filter((word) => !stopwords.has(word));
+  return researchWords(value);
 }
 
 function normalizeLookup(value) {
@@ -93,8 +65,8 @@ function buildGraph(data, layout) {
   data.topics.forEach((topic, index) => {
     const angle = -Math.PI / 2 + (Math.PI * 2 * index) / data.topics.length;
     const center = layout === "orbit"
-      ? { x: 700 + Math.cos(angle) * 340, y: 420 + Math.sin(angle) * 265 }
-      : { x: 350 + (index % 3) * 350, y: 250 + Math.floor(index / 3) * 350 };
+      ? { x: GRAPH_WIDTH / 2 + Math.cos(angle) * 245, y: GRAPH_HEIGHT / 2 + Math.sin(angle) * 265 }
+      : { x: 165 + (index % 3) * 285, y: 170 + Math.floor(index / 3) * 260 };
     centers.set(topic.id, center);
     nodes.push({
       ...topic,
@@ -143,10 +115,12 @@ function buildGraph(data, layout) {
   const conceptMatches = new Map(conceptCatalog.map((concept) => [concept.id, []]));
   for (const paper of data.papers) {
     const text = `${paper.title} ${paper.abstract}`.toLowerCase();
+    const knownConcepts = new Set(paper.conceptIds || []);
     const matches = conceptCatalog
       .map((concept) => ({
         concept,
-        score: concept.terms.reduce((total, term) => total + (text.includes(term) ? 1 : 0), 0),
+        score: (knownConcepts.has(concept.id) ? 2 : 0)
+          + concept.terms.reduce((total, term) => total + (text.includes(term) ? 1 : 0), 0),
       }))
       .filter((match) => match.score > 0)
       .sort((left, right) => right.score - left.score)
@@ -157,14 +131,14 @@ function buildGraph(data, layout) {
   const activeConcepts = conceptCatalog.filter((concept) => conceptMatches.get(concept.id).length > 0);
   activeConcepts.forEach((concept, index) => {
     const angle = -Math.PI / 2 + (Math.PI * 2 * index) / activeConcepts.length;
-    const radius = layout === "orbit" ? 455 : 185;
+    const radius = layout === "orbit" ? 310 : 180;
     nodes.push({
       ...concept,
       id: `concept:${concept.id}`,
       type: "concept",
       count: conceptMatches.get(concept.id).length,
-      x: 700 + Math.cos(angle) * radius,
-      y: 420 + Math.sin(angle) * radius * 0.72,
+      x: GRAPH_WIDTH / 2 + Math.cos(angle) * radius,
+      y: GRAPH_HEIGHT / 2 + Math.sin(angle) * radius * 0.72,
     });
   });
 
@@ -397,7 +371,30 @@ function paperBrief(paper, graph, topics) {
   };
 }
 
-export default function ResearchGraph({ standalone = false, displayName = "" }) {
+function emptyCorpus(projectId = "all") {
+  return {
+    generatedAt: "",
+    source: { kind: "interest", projectId, evidence: "title_abstract" },
+    totalPapers: 0,
+    truncated: false,
+    topics: [],
+    papers: [],
+  };
+}
+
+export default function ResearchGraph({ standalone = false, displayName = "", token = "" }) {
+  const [scope, setScope] = useState("all");
+  const [projects, setProjects] = useState([]);
+  const [corpus, setCorpus] = useState(() => emptyCorpus());
+  const [graphLoading, setGraphLoading] = useState(true);
+  const [graphError, setGraphError] = useState("");
+  const [answerState, setAnswerState] = useState({
+    status: "idle",
+    answer: "",
+    sources: [],
+    retrieval: null,
+    error: "",
+  });
   const [layout, setLayout] = useState("orbit");
   const [activeTopic, setActiveTopic] = useState("all");
   const [lens, setLens] = useState("all");
@@ -423,11 +420,85 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
   const simulationRef = useRef(null);
   const animationFrameRef = useRef(null);
   const keyboardFrameRef = useRef(null);
+  const answerRequestRef = useRef(0);
   const pressedArrowKeysRef = useRef(new Set());
   const svgRef = useRef(null);
   const nodeElementRefs = useRef(new Map());
   const edgeElementRefs = useRef(new Map());
-  const graph = useMemo(() => buildGraph(corpus, layout), [layout]);
+  const graph = useMemo(() => buildGraph(corpus, layout), [corpus, layout]);
+  const isDemoScope = scope === "demo";
+  const selectedProject = projects.find((project) => project.id === scope);
+  const scopeLabel = isDemoScope
+    ? "데모 데이터"
+    : scope === "unassigned"
+      ? "미분류 관심 논문"
+      : selectedProject?.name || "전체 관심 논문";
+
+  useEffect(() => {
+    let cancelled = false;
+    answerRequestRef.current += 1;
+    if (!token) {
+      setProjects([]);
+      return undefined;
+    }
+    api("/api/projects", { token })
+      .then((body) => {
+        if (!cancelled) setProjects(body.projects || []);
+      })
+      .catch(() => {
+        if (!cancelled) setProjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    answerRequestRef.current += 1;
+    setGraphError("");
+    setActiveTopic("all");
+    setLens("all");
+    setQuery("");
+    setPaperLookupQuery("");
+    setLastQuery("");
+    setResults([]);
+    setSelectedId(null);
+    setHoveredId(null);
+    setHoverPoint(null);
+    setPathAnchorId(null);
+    setAnswerState({ status: "idle", answer: "", sources: [], retrieval: null, error: "" });
+    setCamera(DEFAULT_CAMERA);
+    setCameraResetToken((current) => current + 1);
+
+    if (isDemoScope) {
+      setCorpus(demoCorpus);
+      setGraphLoading(false);
+      return undefined;
+    }
+    if (!token) {
+      setCorpus(emptyCorpus(scope));
+      setGraphError("관심 논문 그래프를 불러오려면 로그인해 주세요.");
+      setGraphLoading(false);
+      return undefined;
+    }
+
+    setCorpus(emptyCorpus(scope));
+    setGraphLoading(true);
+    api(`/api/research-graph?projectId=${encodeURIComponent(scope)}&limit=200`, { token })
+      .then((body) => {
+        if (!cancelled) setCorpus(body.corpus || emptyCorpus(scope));
+      })
+      .catch((error) => {
+        if (!cancelled) setGraphError(error.message);
+      })
+      .finally(() => {
+        if (!cancelled) setGraphLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isDemoScope, scope, token]);
   const paperLookupResults = useMemo(() => {
     const queryValue = normalizeLookup(paperLookupQuery);
     if (!queryValue) return [];
@@ -813,7 +884,28 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
     focusCameraOn(nodeId);
   };
 
-  const submitQuery = (event, nextQuery = query) => {
+  const focusRetrievedPapers = (retrieved, { openFirst = true } = {}) => {
+    if (!retrieved[0]) return;
+    for (const [index, item] of retrieved.entries()) {
+      const node = graph.nodeById.get(item.id);
+      if (!node || node.fx != null) continue;
+      const angle = (Math.PI * 2 * index) / retrieved.length;
+      const targetX = GRAPH_WIDTH / 2 + Math.cos(angle) * 145;
+      const targetY = GRAPH_HEIGHT / 2 + Math.sin(angle) * 105;
+      node.vx += (targetX - node.x) * 0.045;
+      node.vy += (targetY - node.y) * 0.045;
+    }
+    simulationRef.current?.alpha(0.52).restart();
+    if (openFirst) {
+      setSelectedId(retrieved[0].id);
+      setFocusDepth(2);
+    } else {
+      setSelectedId(null);
+    }
+    focusCameraOn(retrieved[0].id, 880);
+  };
+
+  const submitQuery = async (event, nextQuery = query) => {
     event?.preventDefault();
     const value = String(nextQuery || "").trim();
     if (!value) return;
@@ -822,24 +914,54 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
     setLastQuery(value);
     setResults(retrieved);
     setLens("evidence");
-    if (retrieved[0]) {
-      for (const [index, item] of retrieved.entries()) {
-        const node = graph.nodeById.get(item.id);
-        if (!node || node.fx != null) continue;
-        const angle = (Math.PI * 2 * index) / retrieved.length;
-        const targetX = GRAPH_WIDTH / 2 + Math.cos(angle) * 145;
-        const targetY = GRAPH_HEIGHT / 2 + Math.sin(angle) * 105;
-        node.vx += (targetX - node.x) * 0.045;
-        node.vy += (targetY - node.y) * 0.045;
+    focusRetrievedPapers(retrieved, { openFirst: isDemoScope });
+
+    if (isDemoScope) {
+      setAnswerState({ status: "idle", answer: "", sources: [], retrieval: null, error: "" });
+      return;
+    }
+
+    const answerRequestId = ++answerRequestRef.current;
+    setAnswerState({ status: "loading", answer: "", sources: [], retrieval: null, error: "" });
+    try {
+      const body = await api("/api/research-graph/answer", {
+        token,
+        method: "POST",
+        body: JSON.stringify({ question: value, projectId: scope }),
+      });
+      if (answerRequestId !== answerRequestRef.current) return;
+      const serverResults = (body.sources || [])
+        .map((source, index) => ({
+          id: `paper:${source.pmid}`,
+          score: Math.max(1, 12 - index),
+          matchType: source.matchType,
+        }))
+        .filter((item) => graph.nodeById.has(item.id));
+      if (serverResults.length) {
+        setResults(serverResults);
+        focusRetrievedPapers(serverResults, { openFirst: false });
       }
-      simulationRef.current?.alpha(0.52).restart();
-      setSelectedId(retrieved[0].id);
-      setFocusDepth(2);
-      focusCameraOn(retrieved[0].id, 880);
+      setAnswerState({
+        status: "success",
+        answer: body.answer || "답변을 생성하지 못했습니다.",
+        sources: body.sources || [],
+        retrieval: body.retrieval || null,
+        error: "",
+      });
+    } catch (error) {
+      if (answerRequestId !== answerRequestRef.current) return;
+      setAnswerState({
+        status: "error",
+        answer: "",
+        sources: [],
+        retrieval: null,
+        error: error.message,
+      });
     }
   };
 
   const clearGraphSearch = () => {
+    answerRequestRef.current += 1;
     setQuery("");
     setLastQuery("");
     setResults([]);
@@ -849,11 +971,13 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
     setHoverPoint(null);
     setPathAnchorId(null);
     setFocusDepth(1);
+    setAnswerState({ status: "idle", answer: "", sources: [], retrieval: null, error: "" });
     setCamera(DEFAULT_CAMERA);
     setCameraResetToken((current) => current + 1);
   };
 
   const resetGraph = () => {
+    answerRequestRef.current += 1;
     setActiveTopic("all");
     setLens("all");
     setQuery("");
@@ -863,6 +987,7 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
     setSelectedId(null);
     setPathAnchorId(null);
     setFocusDepth(1);
+    setAnswerState({ status: "idle", answer: "", sources: [], retrieval: null, error: "" });
     for (const node of graph.nodes) {
       node.fx = null;
       node.fy = null;
@@ -997,6 +1122,17 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
           </div>
         </div>
         <div className="graph-page-meta">
+          <label className="graph-scope-picker">
+            <span>분석 범위</span>
+            <select value={scope} onChange={(event) => setScope(event.target.value)}>
+              <option value="all">전체 관심 논문</option>
+              <option value="unassigned">미분류 관심 논문</option>
+              {projects.map((project) => (
+                <option value={project.id} key={project.id}>{project.name}</option>
+              ))}
+              <option value="demo">데모 데이터 · {demoCorpus.papers.length}편</option>
+            </select>
+          </label>
           <div className="graph-corpus-summary">
             <span><strong>{corpus.papers.length}</strong> 논문</span>
             <span><strong>{graph.nodes.length}</strong> 노드</span>
@@ -1203,9 +1339,15 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
           </details>
 
           <div className="graph-corpus-note">
-            <span>DATASET</span>
-            <p>PubMed 논문 {corpus.papers.length}편의 주제·핵심 개념·내용 유사도를 연결했습니다.</p>
-            <small>{formatDate(corpus.generatedAt)} 업데이트</small>
+            <span>{isDemoScope ? "DEMO DATASET" : "MY INTEREST PAPERS"}</span>
+            <p>
+              {scopeLabel} {corpus.papers.length}편의 제목·초록에서 주제, 핵심 개념, 유사 연구를 연결했습니다.
+            </p>
+            <small>
+              원문 전체가 아닌 제목+초록 기반
+              {corpus.truncated ? ` · 전체 ${corpus.totalPapers}편 중 최근 200편` : ""}
+              {corpus.generatedAt ? ` · ${formatDate(corpus.generatedAt)} 업데이트` : ""}
+            </small>
           </div>
         </aside>
 
@@ -1217,24 +1359,108 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Graph RAG에 질문해보세요 · 예: 암 바이오마커 관련 연구"
               aria-label="Graph RAG 질문"
+              disabled={graphLoading || !corpus.papers.length}
             />
-            <button type="submit">근거 경로 찾기 <span>→</span></button>
+            <button type="submit" disabled={graphLoading || !corpus.papers.length || answerState.status === "loading"}>
+              {answerState.status === "loading"
+                ? "분석 중…"
+                : isDemoScope ? "근거 경로 찾기" : "Graph RAG 답변"} <span>→</span>
+            </button>
           </form>
 
           <div className="graph-suggestion-row">
-            {["암 바이오마커 연구", "디지털 정신건강 중재", "당뇨 예방과 생활습관"].map((suggestion) => (
+            {(corpus.topics.length
+              ? corpus.topics.slice(0, 3).map((topic) => `${topic.label} 관련 연구`)
+              : ["암 바이오마커 연구", "디지털 정신건강 중재", "당뇨 예방과 생활습관"]
+            ).map((suggestion) => (
               <button type="button" key={suggestion} onClick={(event) => submitQuery(event, suggestion)}>
                 {suggestion}
               </button>
             ))}
           </div>
 
+          {graphLoading && (
+            <div className="graph-data-state is-loading" role="status">
+              <span className="spinner" />
+              <strong>{scopeLabel} 그래프를 구성하고 있습니다</strong>
+              <p>활성 관심 논문의 제목과 초록을 연결하는 중입니다.</p>
+            </div>
+          )}
+
+          {!graphLoading && graphError && (
+            <div className="graph-data-state is-error" role="alert">
+              <strong>그래프를 불러오지 못했습니다</strong>
+              <p>{graphError}</p>
+              <button type="button" onClick={() => setScope("demo")}>데모 그래프 보기</button>
+            </div>
+          )}
+
+          {!graphLoading && !graphError && !corpus.papers.length && (
+            <div className="graph-data-state is-empty">
+              <span aria-hidden="true">✦</span>
+              <strong>{scopeLabel}이 비어 있습니다</strong>
+              <p>검색 결과에서 관심 논문을 추가하거나 다른 프로젝트를 선택해 주세요.</p>
+              <button type="button" onClick={() => setScope("demo")}>데모 그래프 먼저 보기</button>
+            </div>
+          )}
+
+          {answerState.status !== "idle" && (
+            <aside className={`graph-rag-answer is-${answerState.status}`} aria-live="polite">
+              <div className="graph-rag-answer-heading">
+                <div>
+                  <span>INTEREST PAPER GRAPH RAG</span>
+                  <strong>{scopeLabel}</strong>
+                </div>
+                {answerState.status !== "loading" && (
+                  <button
+                    type="button"
+                    onClick={() => setAnswerState({ status: "idle", answer: "", sources: [], retrieval: null, error: "" })}
+                    aria-label="Graph RAG 답변 닫기"
+                  >×</button>
+                )}
+              </div>
+              {answerState.status === "loading" && (
+                <div className="graph-rag-answer-loading">
+                  <span className="spinner" />
+                  <p>질문과 직접 관련된 논문을 찾고 그래프 이웃까지 확장하고 있습니다.</p>
+                </div>
+              )}
+              {answerState.status === "error" && <p className="graph-rag-answer-error">{answerState.error}</p>}
+              {answerState.status === "success" && (
+                <>
+                  <div className="graph-rag-answer-body">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{answerState.answer}</ReactMarkdown>
+                  </div>
+                  {answerState.retrieval && (
+                    <p className="graph-rag-evidence-note">
+                      제목+초록 근거 · 직접 {answerState.retrieval.directCount}편 · 그래프 확장 {answerState.retrieval.expandedCount}편
+                    </p>
+                  )}
+                  {answerState.sources.length > 0 && (
+                    <div className="graph-rag-sources">
+                      <span>답변 근거</span>
+                      {answerState.sources.map((source, index) => (
+                        <button type="button" key={source.pmid} onClick={() => selectNode(`paper:${source.pmid}`)}>
+                          <b>{index + 1}</b>
+                          <span>
+                            <strong>{source.title}</strong>
+                            <small>{source.matchType === "direct" ? "직접 근거" : "그래프 이웃"} · PMID {source.pmid}</small>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </aside>
+          )}
+
           <div className="graph-canvas-wrap">
             <svg
               ref={svgRef}
               className={`research-graph-canvas ${graphMode === "3d" ? "is-hidden" : ""}`}
               viewBox={`${camera.x} ${camera.y} ${camera.width} ${camera.height}`}
-              preserveAspectRatio="xMidYMid slice"
+              preserveAspectRatio="xMidYMid meet"
               role="img"
               aria-label="PubMed 논문 지식 그래프"
               onWheel={handleWheel}
@@ -1397,6 +1623,8 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
                   labelsVisible={labelsVisible}
                   motionPaused={motionPaused}
                   topics={corpus.topics}
+                  centerX={GRAPH_WIDTH / 2}
+                  centerY={GRAPH_HEIGHT / 2}
                   relationshipReason={(node) => strongestRelationshipReason(node, graph, corpus.topics)}
                   onSelect={selectNode}
                 />
@@ -1467,9 +1695,13 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
 
             {results.length > 0 && (
               <div className="graph-retrieval-status">
-                <span>GRAPH RETRIEVAL</span>
+                <span>{isDemoScope ? "GRAPH RETRIEVAL" : "GRAPH RAG EVIDENCE"}</span>
                 <strong>“{lastQuery}”</strong>
-                <p>직접 관련 논문 {results.length}편과 주제·핵심 개념·유사 연구 이웃을 확장했습니다.</p>
+                <p>
+                  {answerState.retrieval
+                    ? `직접 근거 ${answerState.retrieval.directCount}편에서 그래프 이웃 ${answerState.retrieval.expandedCount}편까지 확장했습니다.`
+                    : `관련 논문 ${results.length}편과 주제·핵심 개념·유사 연구 이웃을 펼쳤습니다.`}
+                </p>
               </div>
             )}
 
@@ -1583,7 +1815,7 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
                 </div>}
               </aside>
             )}
-            {!selected && (
+            {!selected && answerState.status === "idle" && (
               <aside className="graph-detail-panel graph-insight-panel">
                 <span className="graph-node-type is-topic">RESEARCH INSIGHT</span>
                 <h3>그래프에서 무엇을 발견할 수 있나요?</h3>
@@ -1596,9 +1828,11 @@ export default function ResearchGraph({ standalone = false, displayName = "" }) 
                 </div>
                 <div className="graph-insight-summary">
                   <span>현재 데이터의 중심</span>
-                  <strong>{graphInsight.topic?.label || "6개 의학 연구 분야"}</strong>
+                  <strong>{corpus.papers.length ? graphInsight.topic?.label || "여러 의학 연구 분야" : "분석할 관심 논문 없음"}</strong>
                   <p>
-                    {graphInsight.concepts.length
+                    {!corpus.papers.length
+                      ? "관심 논문을 추가하거나 다른 분석 범위를 선택해 주세요."
+                      : graphInsight.concepts.length
                       ? `${graphInsight.concepts.map((item) => item.node?.label).filter(Boolean).join(", ")} 개념이 여러 논문을 연결합니다.`
                       : "질문을 입력하면 반복되는 연구 개념을 찾아드립니다."}
                   </p>

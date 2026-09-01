@@ -69,6 +69,8 @@ export default function ResearchGraph3D({
   labelsVisible,
   motionPaused,
   topics,
+  centerX = 700,
+  centerY = 430,
   relationshipReason,
   onSelect,
 }) {
@@ -106,13 +108,13 @@ export default function ResearchGraph3D({
       .filter((node) => visibleIds.has(node.id))
       .map((node) => ({
         ...node,
-        x: (node.x - 700) * 0.5,
-        y: (node.y - 430) * 0.5,
+        x: (node.x - centerX) * 0.5,
+        y: (node.y - centerY) * 0.5,
         z: ((Number.parseInt(node.pmid || node.count || "0", 10) || 0) % 180) - 90,
       }));
     const links = visibleEdges.map((edge) => ({ ...edge }));
     return { nodes, links };
-  }, [graph.nodes, visibleEdges, visibleIds]);
+  }, [centerX, centerY, graph.nodes, visibleEdges, visibleIds]);
 
   useEffect(() => {
     fittedRef.current = false;

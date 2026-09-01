@@ -28,8 +28,9 @@ import {
 import { countPubMedByYear, searchPubMed } from "./pubmed.js";
 import { getInterestWordCloud } from "./wordCloud.js";
 import { getOverview } from "./overview.js";
+import { answerResearchGraphQuestion, getResearchGraph } from "./researchGraph.js";
 
-export const API_REVISION = "2026-08-27-overview-spacing-v1";
+export const API_REVISION = "2026-09-01-interest-graph-rag-v1";
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const parse = (schema, value) => schema.parse(value);
@@ -83,6 +84,16 @@ const pdfUploadSchema = z.object({
   if (total > 3_500_000) ctx.addIssue({ code: "custom", message: "Extracted PDF text is too large" });
 });
 const wordCloudTermLimitSchema = z.coerce.number().int().min(10).max(200).default(160);
+const researchGraphProjectSchema = z.union([
+  z.literal("all"),
+  z.literal("unassigned"),
+  z.string().uuid(),
+]).default("all");
+const researchGraphLimitSchema = z.coerce.number().int().min(1).max(300).default(200);
+const researchGraphAnswerSchema = z.object({
+  question: z.string().trim().min(2).max(1000),
+  projectId: researchGraphProjectSchema,
+});
 
 export function fillYearRange(yearFrom, yearTo, counts = {}) {
   if (!Number.isInteger(yearFrom) || !Number.isInteger(yearTo) || yearFrom > yearTo) return counts;
@@ -479,6 +490,17 @@ export function createApp({ authMiddleware = requireUser } = {}) {
 
   app.get("/api/overview", asyncRoute(async (req, res) => {
     res.json(await getOverview(req.user.id));
+  }));
+
+  app.get("/api/research-graph", asyncRoute(async (req, res) => {
+    const projectId = parse(researchGraphProjectSchema, req.query.projectId);
+    const limit = parse(researchGraphLimitSchema, req.query.limit);
+    res.json(await getResearchGraph(req.user.id, { projectId, limit }));
+  }));
+
+  app.post("/api/research-graph/answer", asyncRoute(async (req, res) => {
+    const input = parse(researchGraphAnswerSchema, req.body);
+    res.json(await answerResearchGraphQuestion(req.user.id, { ...input, limit: 200 }));
   }));
 
   app.get("/api/trend", asyncRoute(async (req, res) => {
