@@ -6,5 +6,5 @@ export default function ResearchGraphPage({ session }) {
     || session?.user?.email
     || "사용자";
 
-  return <ResearchGraph standalone displayName={displayName} />;
+  return <ResearchGraph standalone displayName={displayName} token={session?.access_token || ""} />;
 }

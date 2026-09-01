@@ -8,7 +8,7 @@ current visual design and user-facing behavior.
 | Layer | Target |
 | --- | --- |
 | Frontend | React 19 + Vite on Vercel |
-| Backend | Node.js 20 + Express on Vercel Functions |
+| Backend | Node.js 22 + Express on Vercel Functions |
 | Authentication | Supabase Google OAuth |
 | Database | Supabase PostgreSQL with RLS |
 | Paper source | NCBI PubMed E-utilities and PMC |
@@ -48,10 +48,38 @@ as outbound links only.
 
 - `pubmed_records` is shared and deduplicated by PMID.
 - `user_paper_collections` defines which papers a user owns.
+- `research_projects` and `project_papers` classify owned papers without copying paper content.
 - `chat_rooms` and `chat_messages` are user scoped.
 - `chat_room_papers` permanently binds one to five owned papers to a room.
 - `paper_documents` and `paper_chunks` contain reusable PMC/abstract analysis
   material.
+
+All user and business data uses soft deletion. General reads and aggregates
+must include `is_del = false`; project graph queries also verify the authenticated
+`user_id` on both the project and paper link.
+
+## Interest-paper Graph RAG
+
+Research Galaxy uses the active interest collection as its primary corpus. It
+does not persist a duplicate graph database.
+
+```text
+Authenticated user
+  → all / unassigned / owned project scope
+  → active interest papers (maximum 200)
+  → title + abstract topic/concept graph
+  → direct evidence (maximum 3)
+  → one-hop graph neighbors (maximum 3)
+  → LangGraph input guard
+  → OpenAI answer from the six-paper subgraph
+  → answer + direct/neighbor source labels
+```
+
+The graph itself is deterministic and does not call OpenAI. An API call occurs
+only when the user requests a Graph RAG answer. The current evidence scope is
+title and abstract; full-text chunks remain in the separate conversation-scoped
+vector RAG pipeline. The fixed 148-paper corpus remains available only as an
+explicit demo scope.
 
 ## Deployment boundaries
 
